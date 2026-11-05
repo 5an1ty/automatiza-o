@@ -516,3 +516,56 @@ configuração de autorização corporativa persistente.
 **A gravação COM e o PDF final pelo Microsoft Excel continuam pendentes de teste
 real no Windows.** A validação dos PDFs de entrada e da cópia OOXML não comprova
 impressão, paginação ou legibilidade do formulário exportado pelo Excel.
+
+## Correção pontual de apresentação regional da data E8
+
+A falha «exibição da data diverge» vinha de comparar literalmente `Range.Text`
+com `DD/MM/AAAA`, mesmo depois de validar o serial e o formato. Agora os três
+resultados permanecem separados: **Value2** é a autoridade para o valor da data;
+**NumberFormat** precisa continuar sendo brasileiro; **Text** é interpretado
+segundo a ordem declarada por **NumberFormatLocal**. Também se observa **Value**,
+que pode ser um variant de data, sem usá-lo para substituir o serial correto.
+
+São reconhecidas apresentações numéricas regionais com separadores diferentes,
+zeros opcionais, marcas direcionais e dígitos Unicode. Máscaras locais de dia/mês/
+ano em português, inglês, francês e alemão são reconhecidas. Se a máscara local
+não for interpretável, só se usa a ordem explicitamente declarada pelo formato
+invariante; não se tenta adivinhar outra ordem para fazer a comparação passar.
+Uma data invertida, valor divergente, formato inválido ou apresentação sem causa
+confirmada continuam bloqueados. Não se aceita texto arbitrário como data real.
+
+Antes de qualquer falha de validação COM de E8, grava-se um relatório técnico
+local em `%LOCALAPPDATA%\CadastroPCM\diagnostico-data\diagnostico_data_*.json`.
+A mensagem indica seu caminho. O relatório registra Value, Value2, Text,
+NumberFormat, NumberFormatLocal, largura em pontos, largura em caracteres,
+data esperada, ordem usada e os resultados individuais. Tentativas de ajuste
+ficam no mesmo relatório. Ele contém somente observações de E8; nomes/caminhos
+não são incorporados e textos não datáveis ou literais de formato desconhecidos
+são omitidos. Se a verificação independente OOXML falhar, há um relatório próprio
+que marca as propriedades COM não observadas como nulas. Não publique relatórios
+nem cópias do formulário no GitHub.
+
+Se aparecer `####`, a cópia pode receber ajuste **somente em E8**: barras literais,
+localidade pt-BR e, havendo largura suficiente para leitura conservadora a oito
+pontos, ShrinkToFit. Não se aplica AutoFit, não se alteram largura de colunas,
+altura de linhas, mesclagens ou proteção. Se o ajuste for recusado ou a largura
+for insuficiente, a operação falha com a causa e o relatório, sem modificar o
+modelo original. Após salvar e reabrir, valor, formato e apresentação são
+conferidos novamente.
+
+Na cópia temporária de impressão, o formato é forçado para
+`[$-416]dd"/"mm"/"yyyy`. Uma representação regional equivalente pode ser aceita
+na leitura do Excel, mas **o PDF exige o texto exato DD/MM/AAAA com barras e uma
+data legível de pelo menos oito pontos**. A leitura do conteúdo do PDF, A4,
+quantidade de páginas e preservação do formulário continuam sendo verificadas;
+não se informa sucesso quando apenas o serial ou `####` estiverem visíveis.
+
+**149 testes passaram, nenhum falhou**, em Python 3.12/Linux. Os novos casos
+cobrem serial correto, diferença regional confirmada, ordem ambígua não inferida,
+`####`, largura reparável e insuficiente, data realmente errada, formato inválido,
+relatórios antes de exceção e sem dados pessoais, salvamento/reabertura, barras
+literais no PDF, fonte mínima da data e dimensões do formulário preservadas.
+Os casos de COM usam simulações explícitas, incluindo a configuração regional;
+**a gravação e a exportação pelo Excel real ainda dependem do Windows do usuário**.
+Use o diagnóstico local de E8 documentado acima, também com `--export-pdf`, para
+confirmar a apresentação na instalação real antes da aceitação final.

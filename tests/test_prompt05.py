@@ -10,7 +10,7 @@ import pymupdf
 import pytest
 from openpyxl import Workbook
 from openpyxl.styles import Protection
-from openpyxl.utils.datetime import CALENDAR_MAC_1904, to_excel
+from openpyxl.utils.datetime import CALENDAR_MAC_1904, to_excel, from_excel
 from PySide6.QtWidgets import QComboBox, QDialog
 
 from cadastro_pcm.core import excel_writer, pdf_exporter
@@ -161,7 +161,10 @@ def test_native_writer_sets_date_format_and_reopens(extended_template, tmp_path,
             @property
             def NumberFormatLocal(self): return 'dd/mm/aaaa'
             @property
-            def Text(self): return self.cell.value.strftime('%d/%m/%Y')
+            def Text(self):
+                value = self.cell.value
+                if isinstance(value, (int, float)): value = from_excel(value, wb.epoch)
+                return value.strftime('%d/%m/%Y')
             @property
             def NumberFormat(self): return self.cell.number_format
             @NumberFormat.setter
@@ -306,7 +309,8 @@ def test_pdf_native_flow_uses_disposable_copy_and_fits_one_page(extended_templat
                 if ':' in address: return SimpleNamespace(Width=500, Height=700)
                 value = sheet[address].value
                 text = value.strftime('%d/%m/%Y') if isinstance(value, datetime) else str(value or '')
-                return SimpleNamespace(Value=value, Text=text, NumberFormat=sheet[address].number_format)
+                serial = to_excel(value, wb.epoch) if isinstance(value, datetime) else value
+                return SimpleNamespace(Value=value, Value2=serial, Text=text, NumberFormat=sheet[address].number_format)
             def ResetAllPageBreaks(self):
                 calls.append('reset')
                 if protected: raise RuntimeError('Quebras não podem ser excluídas nesta folha protegida')

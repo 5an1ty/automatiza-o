@@ -13,7 +13,7 @@ from .print_layout import print_area
 from .excel_runtime import excel_session
 from .template_reader import read_template, sheet_parts
 from .date_style import date_style, DATE_FORMAT
-from .excel_date import validate_date, inspect_com_date, require_com_date
+from .excel_date import check_stored_date, check_com_date
 from .item_extractor import separate_ncm
 from .product_text import clean_description
 
@@ -253,7 +253,7 @@ def verify_request_date(path, sheet, expected):
     wb = read_template(path)
     try:
         cell = wb[sheet]['E8']
-        validate_date(cell.value, cell.number_format, expected, wb.epoch)
+        check_stored_date(cell, expected, wb.epoch)
     finally:
         wb.close()
 
@@ -297,6 +297,7 @@ def write_excel_com(template, destination, values, sheet, epoch):
                 if address == 'E8':
                     ws.Range(address).Value2 = float(value)
                     ws.Range(address).NumberFormat = DATE_FORMAT
+                    check_com_date(ws.Range(address), values['E8'], epoch, phase='antes de salvar', repair=True)
                 else:
                     ws.Range(address).Value = value
                 if address in validations and not ws.Range(address).Validation.Value:
@@ -304,8 +305,7 @@ def write_excel_com(template, destination, values, sheet, epoch):
             book.Save()
         if 'E8' in values:
             with excel_session(destination, read_only=True) as (_, reopened):
-                report = inspect_com_date(reopened.Worksheets(sheet).Range('E8'), values['E8'], epoch)
-                require_com_date(report)
+                check_com_date(reopened.Worksheets(sheet).Range('E8'), values['E8'], epoch, phase='após reabrir')
         return destination
     except Exception:
         destination.unlink(missing_ok=True)

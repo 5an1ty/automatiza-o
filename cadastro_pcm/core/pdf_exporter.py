@@ -9,7 +9,7 @@ from openpyxl.utils.datetime import from_excel
 from .template_reader import read_template
 from .excel_runtime import excel_session
 from .print_layout import print_area, configure_page, check_print_scale
-from .date_style import DATE_FORMAT
+from .excel_date import check_com_date
 
 
 def validate_pdf(path, name, expected_pages=1, expected_texts=(), require_a4=False, expected_date=None):
@@ -40,6 +40,9 @@ def validate_pdf(path, name, expected_pages=1, expected_texts=(), require_a4=Fal
             if require_a4:
                 for block in page.get_text('dict')['blocks']:
                     for line in block.get('lines', []):
+                        if expected_date and expected_date in ''.join(span['text'] for span in line['spans']):
+                            if any(span['size'] < 8 for span in line['spans'] if any(c.isdecimal() for c in span['text'])):
+                                raise ValueError('Data do PDF menor que 8 pontos; ajuste localizado insuficiente para legibilidade.')
                         for span in line['spans']:
                             x0, y0, x1, y1 = span['bbox']
                             if x0 < -0.5 or y0 < -0.5 or x1 > page.rect.width + 0.5 or y1 > page.rect.height + 0.5:
@@ -66,6 +69,7 @@ def export_pdf(workbook, destination, sheet, name, expected_pages=1):
         if requested_date is not None and not isinstance(requested_date, date):
             raise ValueError('E8 não contém uma data válida. Revise a cópia Excel antes de exportar.')
         date_text = requested_date.strftime('%d/%m/%Y') if requested_date else None
+        date_epoch = wb.epoch
     finally:
         wb.close()
     try:
@@ -79,7 +83,9 @@ def export_pdf(workbook, destination, sheet, name, expected_pages=1):
                 ws = book.Worksheets(sheet)
                 if ws.Range('C16').Value not in (None, ''):
                     raise ValueError('Campo Tipo preenchido; exportação bloqueada.')
-                if date_text: ws.Range('E8').NumberFormat = DATE_FORMAT
+                if date_text:
+                    check_com_date(ws.Range('E8'), requested_date, date_epoch,
+                                   phase='preparação do PDF', repair=True, exact=True)
                 configure_page(ws, area, expected_pages)
                 check_print_scale(ws, area, expected_pages)
                 protected_breaks = False

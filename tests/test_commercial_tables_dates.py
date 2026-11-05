@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pymupdf
 import pytest
-from openpyxl.utils.datetime import CALENDAR_MAC_1904, CALENDAR_WINDOWS_1900, to_excel
+from openpyxl.utils.datetime import CALENDAR_MAC_1904, CALENDAR_WINDOWS_1900, to_excel, from_excel
 
 from cadastro_pcm.core import date_diagnostics
 from cadastro_pcm.core.excel_date import brazilian_date_format, calendar_date, inspect_com_date, require_com_date, validate_date
@@ -266,7 +266,10 @@ def test_windows_diagnostic_reopens_reports_e8_only_and_preserves_original(exten
             def NumberFormat(self, value): ws['E8'].number_format = value + ';@'
             NumberFormatLocal = 'dd/mm/aaaa'
             @property
-            def Text(self): return ws['E8'].value.strftime('%d/%m/%Y')
+            def Text(self):
+                value = ws['E8'].value
+                if isinstance(value, (int, float)): value = from_excel(value, wb.epoch)
+                return value.strftime('%d/%m/%Y')
         sheet = SimpleNamespace(ProtectContents=False, Range=lambda addr: Cell())
         def save():
             ws['E8'] = ws['E8'].value + saved_delta

@@ -9,7 +9,7 @@ import tempfile
 from uuid import uuid4
 from openpyxl.utils.datetime import to_excel
 from .date_style import DATE_FORMAT
-from .excel_date import inspect_com_date, require_com_date
+from .excel_date import inspect_com_date, check_com_date, DateValidationError
 from .excel_runtime import excel_session
 from .excel_writer import fingerprint, validate_cells, verify_request_date
 from .pdf_exporter import export_pdf
@@ -31,6 +31,7 @@ def diagnose_date(template, sheet, expected, output_dir, with_pdf=False):
     with target.open('xb') as dst, template.open('rb') as src: shutil.copyfileobj(src, dst)
     report = {'expected_date': expected.isoformat(), 'ok': False,
               'pdf': 'não executado' if with_pdf else 'não solicitado'}
+    phase = 'gravação'
     try:
         with excel_session(target, read_only=False) as (_, book):
             if book.ReadOnly: raise ValueError('Cópia aberta somente para leitura.')
@@ -39,18 +40,25 @@ def diagnose_date(template, sheet, expected, output_dir, with_pdf=False):
                 raise ValueError('E8 protegida ou com fórmula; original e proteção preservados.')
             cell.Value2 = float(to_excel(expected, epoch))
             cell.NumberFormat = DATE_FORMAT
+            report['before_save'] = check_com_date(cell, expected, epoch, phase='diagnóstico antes de salvar',
+                                                   report_dir=folder, repair=True)
             book.Save()
+        phase = 'reabertura'
         with excel_session(target, read_only=True) as (_, book):
             report['after_reopen'] = inspect_com_date(book.Worksheets(sheet).Range('E8'), expected, epoch)
-        require_com_date(report['after_reopen'])
+            check_com_date(book.Worksheets(sheet).Range('E8'), expected, epoch,
+                           phase='diagnóstico após reabrir', report_dir=folder)
         verify_request_date(target, sheet, expected)
         if with_pdf:
+            phase = 'exportação PDF'
             report['pdf'] = 'falhou'
             export_pdf(target, target.with_suffix('.pdf'), sheet, '', 1)
             report['pdf'] = 'exportado e data brasileira conferida'
         report['ok'] = True
     except Exception as exc:
-        report['error'] = str(exc)
+        report['failed_phase'] = phase
+        report['error'] = exc.reason if isinstance(exc, DateValidationError) else 'Operação local não concluída: ' + type(exc).__name__
+        if isinstance(exc, DateValidationError): report['technical_report'] = exc.report_path.name
     report['source_unchanged'] = fingerprint(template) == before
     report['copy'] = target.name
     report_path = target.with_suffix('.json')
