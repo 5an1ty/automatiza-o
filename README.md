@@ -45,7 +45,7 @@ SHA-256 do modelo; qualquer alteração exige nova conferência.
 | Data | E8 |
 | Área | C9 |
 | Nome | A12 |
-| Descrição técnica, fabricante, código e NCM fiscal | A14 |
+| Descrição técnica e NCM fiscal (`NCM:`) | A14 |
 | Classificação | A16 |
 | Tipo (nunca escrito) | C16 |
 | Grupo UM | E16 |
@@ -105,16 +105,21 @@ Não se remove a proteção. C16 (Tipo), assinaturas e células fora do mapeamen
 não são escritos. Ainda se exige conferir as posições reais das assinaturas.
 
 Sem Windows, a escrita OOXML existente é mantida para desenvolvimento e testes
-sintéticos: ela altera apenas os valores mapeados na cópia. Não é homologação do
+sintéticos: ela altera os valores mapeados e acrescenta um estilo de data para E8 na cópia. Não é homologação do
 modelo oficial nem substituto de Excel para gerar PDF. No Windows, a ausência de
 Excel/pywin32 gera mensagem de incompatibilidade; não há fallback silencioso.
 
-A exportação abre uma instância isolada do Excel, desativa macros e atualização
-de links, abre a cópia somente para leitura e exporta apenas a aba pertinente.
-Aplica A4, orientação vertical e largura de uma página, sem salvar a mudança no
-arquivo. A altura não é comprimida automaticamente: se houver mais páginas que
-o esperado, a exportação falha para exigir revisão, evitando reduzir texto até
-ficar ilegível. Quebras e legibilidade precisam de aceitação visual no Windows.
+A exportação cria uma cópia temporária do Excel preenchido e abre essa cópia em
+uma instância isolada do Excel, com macros e atualização de links desativadas.
+Exporta somente a aba pertinente. O modelo original e o Excel já salvo não são
+alterados pela preparação da impressão. Na cópia temporária, aplica A4 vertical,
+uma página de largura e, por padrão, uma de altura, e limpa as quebras de página.
+As margens existentes são mantidas. Antes de reduzir, mede largura e altura reais
+pelo Excel e bloqueia escala inferior a 85%. Se a proteção impedir limpar quebras,
+a proteção é mantida e o ajuste Fit To é usado para ignorar as quebras manuais;
+o resultado ainda precisa passar por todas as verificações do PDF. Se falhar,
+a causa e a restrição de quebras são informadas. A escala é uma barreira
+conservadora; legibilidade, objetos e sobreposições ainda exigem aceitação visual.
 
 Se não houver área de impressão, os limites preliminares são A1:E33 (nacional)
 e A1:E34 (importado). Antes de utilizá-los, o programa rejeita conteúdo de células
@@ -122,10 +127,13 @@ ou mesclagens fora deles. Áreas existentes também são verificadas. Objetos,
 imagens e assinaturas vazias não podem ser certificados apenas por esse teste:
 confira o relatório, o modelo e o PDF antes de autorizar a versão real.
 
-O PDF deve existir, conter o nome do item, ter o número esperado de páginas e não
-ter páginas sem texto. PDFs inválidos são removidos. Quando a exportação falha
+O PDF deve existir, conter o nome do item, a data brasileira e os textos das
+células preenchidas/institucionais da aba, ter o número esperado de páginas e
+não ter páginas sem texto. A exportação também confere A4 vertical, limites de
+texto e fonte mínima de 5 pontos; não certifica imagens nem aceitação visual. PDFs inválidos são removidos. Quando a exportação falha
 após a geração do Excel, a mensagem indica onde o Excel e registro JSON ficaram.
-A instância COM é encerrada em sucesso e erro; não se encerram processos Excel
+Use **Exportar PDF do Excel salvo** para tentar novamente sem preencher outra
+cópia nem reprocessar a cotação. A instância COM é encerrada em sucesso e erro; não se encerram processos Excel
 de outras sessões do usuário.
 
 A conferência visual de sobreposição, assinaturas e equivalência ao exemplo continua
@@ -190,7 +198,7 @@ O tema escuro e a organização da interface foram preservados. O botão
 - Tipo vazio, hash autorizado e limites de impressão.
 - Exportação real de PDF sintético pelo Excel, com uma página verificada.
 - Se o modelo estiver autorizado e sem bloqueios, exportação temporária do modelo
-  original **somente para leitura, sem preenchimento**, para conferir paginação.
+  em cópia temporária **sem preenchimento**, para conferir paginação.
 
 O diagnóstico não gera cadastros fictícios no modelo. O teste sintético é um livro
 separado, criado em memória. Os PDFs de teste ficam em pasta temporária local e
@@ -306,3 +314,73 @@ continuam sendo as opções de exportação solicitadas. **Excel COM e geração
 de PDF permanecem pendentes de execução no Windows**, assim como equivalência
 visual, legibilidade, logotipo, assinaturas e quebras. Os testes COM publicados
 usam simulações. Python 3.14 no Windows não foi executado neste ambiente.
+
+
+## Prompt 05 — revisão simples, data e nova exportação
+
+A revisão principal agora apresenta somente nome, descrição técnica, NCM e preço
+unitário. Fabricante, código do fabricante, quantidade e total não aparecem no
+editor, na tabela ou nos campos do painel de detalhes. As configurações e a aba
+**Cadastro e solicitação** conservam requisitante, política de data, classificação
+e os padrões administrativos. A pesquisa manual mantém descrição, NCM e preço;
+nenhuma pesquisa automática foi adicionada. Campos antigos continuam legíveis no
+JSON para compatibilidade, mas fabricante/código não são extraídos nem anexados
+automaticamente ao formulário. Quantidade e total continuam apenas internos.
+
+A identificação depende de cabeçalhos semânticos de tabelas ou campos de item
+rotulados. Regras de contexto distinguem duração/prazo, pagamento, frete, dados
+bancários, totais e seções comerciais. Essas seções encerram a associação com o
+item anterior, evitando que preços de outra seção sejam herdados. Uma seção
+comercial não é reaberta por uma descrição genérica; uma nova seção de itens ou
+um produto/material/serviço explicitamente rotulado pode iniciar outro item.
+Nomes legítimos de serviços, como transporte rodoviário, continuam aceitos.
+Layout ambíguo permanece pendente para cadastro manual; não há promessa de
+reconhecimento universal. Trechos comerciais removidos conservam evidência para
+conferência. Itens legados cujo nome é uma condição comercial não podem ser gerados.
+
+A14 recebe somente a descrição técnica e uma linha `NCM: XXXX.XX.XX`. NCM já
+presente é normalizado sem duplicação; divergência com o campo fiscal exige
+revisão. NCM confirmado como não aplicável não gera código fictício. Fabricante,
+código de fabricante e condições comerciais não são adicionados à descrição.
+
+E8 recebe uma data verdadeira e `NumberFormat = "dd/mm/yyyy"`, mantendo a política
+atual ou fixa. Depois de salvar, a cópia é reaberta e a data/formatação são
+verificadas. No backend OOXML de testes, acrescenta-se um estilo exclusivo para
+E8 sem substituir estilos existentes. A data de emissão institucional não muda.
+
+Se o PDF falhar, a interface conserva a referência ao Excel e mostra sua pasta,
+a causa e o botão **Exportar PDF do Excel salvo**. A nova tentativa usa o mesmo
+arquivo, aba e parâmetros registrados na geração, sem reler a cotação nem criar
+outro cadastro. Não substitui PDFs existentes. Editar/reprocessar os itens invalida
+a associação da saída anterior. A lista de itens e essas associações continuam
+restritas à sessão atual do aplicativo.
+
+### Verificações do Prompt 05
+
+**91 testes passaram e nenhum falhou** em Python 3.12/Linux. Incluem condições
+comerciais variadas, associação de preços, serviços legítimos, interface simples,
+compatibilidade de registros, descrição final exata, datas nos sistemas Excel
+1900/1904, preservação de estilos institucionais, políticas de data, falha e nova
+exportação sem reprocessar. O fluxo de exportação nativa foi testado com COM
+simulado: cópia temporária, remoção de quebras, A4, ajuste de largura/altura,
+limite de escala, validação de conteúdo/data e PDF sintético de uma página,
+incluindo o caso de uma folha protegida que recusa excluir quebras manuais.
+Um caso adicional garante que substituir uma célula vazia no backend OOXML não
+consuma o rótulo seguinte: todas as células fora do mapeamento são comparadas.
+
+A cotação oficial disponibilizada foi novamente processada pelo worker e pela
+revisão da interface: Gaxeta 16, R$ 239,00, NCM 4016.93.00. O botão Gerar Excel
+produziu uma cópia OOXML local cuja descrição é exatamente `Gaxeta 16` seguida
+de `NCM: 4016.93.00`. E8 foi conferida após reabrir, com data verdadeira e formato
+brasileiro. Modelo, cotação e referência PDF permaneceram intactos; Tipo,
+assinaturas, demais células institucionais e sete validações foram preservados.
+Os documentos e saídas locais não integram o repositório.
+
+**A exportação real pelo Microsoft Excel e a impressão ainda não foram executadas
+neste ambiente Linux.** Não se declara homologação de uma página sem cortes,
+legibilidade ou logotipo com base nas simulações. No Windows, atualize o projeto,
+execute `iniciar.bat`, confira/autorize o modelo e gere Excel + PDF. Confirme a data,
+formulário inteiro, assinaturas vazias, logotipo e controle de alterações. Se
+falhar, use a nova exportação do Excel salvo e registre a causa exibida. Não se
+remove proteção para tentar forçar uma exportação. Python 3.14/Windows permanece
+pendente de execução nesta etapa.

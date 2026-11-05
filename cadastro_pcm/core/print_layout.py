@@ -31,11 +31,29 @@ def print_area(ws):
     return area
 
 
-def configure_page(ws, area):
+def configure_page(ws, area, expected_pages=1):
     ws.PageSetup.PrintArea = area
     ws.PageSetup.PaperSize = 9  # xlPaperA4
     ws.PageSetup.Orientation = 1  # xlPortrait
     ws.PageSetup.Zoom = False
     ws.PageSetup.FitToPagesWide = 1
-    # Do not shrink height blindly. Additional pages fail PDF validation for review.
-    ws.PageSetup.FitToPagesTall = False
+    ws.PageSetup.FitToPagesTall = expected_pages
+
+
+def check_print_scale(ws, area, expected_pages=1):
+    """Use Excel's actual point dimensions before fitting; do not shrink blindly.
+
+    Keep existing margins and reject more than 15% reduction. This is a geometry
+    guard, not a certificate of visual readability or merged-cell text fit.
+    """
+    if expected_pages < 1: raise ValueError('Número de páginas inválido.')
+    setup = ws.PageSetup
+    width = 595.28 - float(setup.LeftMargin) - float(setup.RightMargin)
+    height = 841.89 - float(setup.TopMargin) - float(setup.BottomMargin)
+    region = ws.Range(area)
+    if min(width, height, float(region.Width), float(region.Height)) <= 0:
+        raise ValueError('Dimensões ou margens de impressão inválidas.')
+    scale = min(1.0, width / float(region.Width), height * expected_pages / float(region.Height))
+    if scale < 0.85:
+        raise ValueError(f'O formulário exigiria escala de {scale:.0%}; inferior ao limite de 85% para preservar legibilidade. Revise alturas, largura e margens da cópia no Excel.')
+    return scale

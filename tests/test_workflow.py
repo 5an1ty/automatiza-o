@@ -88,7 +88,7 @@ def test_excel_copy_integrity(template, tmp_path):
     with ZipFile(template) as original, ZipFile(target) as copy:
         assert original.namelist() == copy.namelist()
         for name in original.namelist():
-            if name != 'xl/worksheets/sheet1.xml': assert original.read(name) == copy.read(name)
+            if name not in ('xl/worksheets/sheet1.xml', 'xl/styles.xml'): assert original.read(name) == copy.read(name)
 
 
 def test_locked_cells_refused(template, tmp_path):

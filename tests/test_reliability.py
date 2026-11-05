@@ -61,7 +61,7 @@ def test_page_configuration():
     configure_page(ws, 'A1:E34')
     assert ws.PageSetup.PaperSize == 9 and ws.PageSetup.Orientation == 1
     assert ws.PageSetup.FitToPagesWide == 1
-    assert ws.PageSetup.FitToPagesTall is False
+    assert ws.PageSetup.FitToPagesTall == 1
 
 
 def test_pdf_additional_blank_and_missing_name(tmp_path):
@@ -79,8 +79,9 @@ def test_pdf_export_failure_cleans_partial(monkeypatch, tmp_path):
     template = tmp_path/'modelo.xlsx'; wb = Workbook(); ws = wb.active; ws.title='Criação de Material Nacional'; ws['A33']='Controle'; wb.save(template)
     output = tmp_path/'saida.pdf'
     class FakeSheet:
-        PageSetup = SimpleNamespace()
-        def Range(self, address): return SimpleNamespace(Value=None)
+        PageSetup = SimpleNamespace(LeftMargin=36, RightMargin=36, TopMargin=36, BottomMargin=36)
+        def Range(self, address): return SimpleNamespace(Value=None, Width=500, Height=700, Text='Controle')
+        def ResetAllPageBreaks(self): pass
         def ExportAsFixedFormat(self, *args):
             output.write_bytes(b'incompleto')
             raise RuntimeError('Falha simulada de exportação')

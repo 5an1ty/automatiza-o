@@ -40,7 +40,7 @@ def test_ncm_not_taken_from_contacts_or_manufacturer_code():
     text = 'Telefone: 12345678\nData: 12/03/2026\nProduto: Anel REF 12345678\nCódigo do fabricante: 40169300\nPreço total: 10,00'
     item = extract_items([Page('sintetico', 1, text, [])])[0]
     assert item.name == 'Anel REF 12345678'
-    assert not item.ncm and item.manufacturer_code == '40169300'
+    assert not item.ncm and not item.manufacturer_code
     assert item.unit_price is None
     assert any('Preço unitário' in w for w in item.warnings)
 
@@ -135,7 +135,7 @@ def test_extended_lists_and_package_preservation(extended_template, tmp_path):
     with ZipFile(template) as before, ZipFile(target) as after:
         assert before.namelist() == after.namelist()
         for name in before.namelist():
-            if name != 'xl/worksheets/sheet1.xml': assert before.read(name) == after.read(name)
+            if name not in ('xl/worksheets/sheet1.xml', 'xl/styles.xml'): assert before.read(name) == after.read(name)
         a = before.read('xl/worksheets/sheet1.xml').decode()
         b = after.read('xl/worksheets/sheet1.xml').decode()
         assert a.split('<sheetData>')[0] == b.split('<sheetData>')[0]
@@ -213,8 +213,8 @@ def test_gui_process_reprocess_preserves_edits_until_confirmed(gui, tmp_path, mo
     assert window.items[0].unit_price == Decimal('18.50')
     assert 'Processamento concluído' in window.status.text()
     assert any(title == 'Processamento concluído' for title, _ in messages)
-    assert window.table.columnCount() == 6
-    assert all(window.table.horizontalHeaderItem(c).text() != 'Quantidade' for c in range(6))
+    assert window.table.columnCount() == 5
+    assert all(window.table.horizontalHeaderItem(c).text() != 'Quantidade' for c in range(window.table.columnCount()))
     window.items[0].name = 'Edição preservada'; window.items[0].approved = True
     monkeypatch.setattr(QMessageBox, 'question', lambda *args: QMessageBox.No)
     window.process_button.click()
@@ -233,7 +233,7 @@ def test_gui_review_approval_and_excel_generation(gui):
     editor = main_window.Editor(item, window)
     assert 'quantity' not in editor.inputs
     editor.inputs['description'].setPlainText('Descrição técnica revisada')
-    editor.inputs['manufacturer'].setText('Fabricante sintético')
+    assert 'manufacturer' not in editor.inputs
     editor.confirm.setChecked(True); editor.save(item)
     assert editor.result_item.approved and editor.result_item.quantity == 3
     assert editor.result_item.name == 'Parafuso M8'

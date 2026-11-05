@@ -3,6 +3,7 @@ from decimal import Decimal
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 import re
+from .product_text import commercial_line
 
 
 class Evidence(BaseModel):
@@ -22,6 +23,8 @@ class Item(BaseModel):
     ncm: str = ''
     ncm_not_applicable: bool = False
     warnings: list[str] = Field(default_factory=list)
+    # Legacy fields remain readable in existing JSON; new extraction/review does
+    # not populate them and document output never adds them automatically.
     manufacturer: str = ''
     manufacturer_code: str = ''
     classification: str = 'Material'
@@ -52,6 +55,8 @@ class Item(BaseModel):
     def pending_fields(self):
         missing = []
         if not self.name.strip(): missing.append('Nome do material')
+        elif commercial_line(self.name.strip().splitlines()[0]):
+            missing.append('Identificação do material (o nome informado é uma condição comercial)')
         if not self.requester.strip(): missing.append('Requisitante')
         if self.unit_price is None: missing.append('Preço unitário confirmado')
         if not self.ncm and not self.ncm_not_applicable:

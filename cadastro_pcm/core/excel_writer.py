@@ -12,6 +12,9 @@ from openpyxl.utils.datetime import to_excel
 from .print_layout import print_area
 from .excel_runtime import excel_session
 from .template_reader import read_template, sheet_parts
+from .date_style import date_style, DATE_FORMAT
+from .item_extractor import separate_ncm
+from .product_text import clean_description
 
 MAP = {'requester':'C8', 'request_date':'E8', 'area':'C9', 'name':'A12',
        'description':'A14', 'classification':'A16', 'unit':'E16', 'group':'A18',
@@ -126,13 +129,15 @@ def check_template(template, item, sheet, authorized_sha):
         print_area(ws)
         if (item.imported == 'Sim') != ('importado' in sheet.lower()):
             raise ValueError('Item Importado? incompatível com a aba selecionada.')
-        description = item.description
-        if item.manufacturer:
-            description += '\nFabricante: ' + item.manufacturer
-        if item.manufacturer_code:
-            description += '\nCódigo do fabricante: ' + item.manufacturer_code
+        description = clean_description(item.description) or item.name
+        # Old records used this longer label. Normalize it before extracting the
+        # existing code and re-add exactly one fiscal line.
+        description = re.sub(r'(?i)NCM\s+fiscal\s+informado\s*:', 'NCM:', description)
+        description, codes = separate_ncm(description)
+        if codes and any(code != item.ncm for code in codes):
+            raise ValueError('NCM da descrição diverge do campo fiscal; revise o item.')
         if item.ncm:
-            description += '\nNCM fiscal informado: ' + item.ncm
+            description += '\nNCM: ' + item.ncm
         values = {address: getattr(item, field) for field, address in MAP.items()}
         values['A14'] = description
         # An empty optional field already empty in the template needs no edit.
@@ -152,12 +157,19 @@ def write_excel(template, destination, item, sheet, authorized_sha):
         raise ValueError('Destino existente ou igual ao modelo; gravação recusada.')
     values, epoch = check_template(template, item, sheet, authorized_sha)
     if use_native_excel():
-        return write_excel_com(template, destination, values, sheet, epoch)
+        result = write_excel_com(template, destination, values, sheet, epoch)
+        try:
+            verify_request_date(result, sheet, item.request_date)
+        except Exception:
+            destination.unlink(missing_ok=True)
+            raise
+        return result
     with ZipFile(template) as source:
         part = sheet_parts(source)[sheet]
         original_xml = source.read(part).decode('utf-8')
         root = ET.fromstring(original_xml)
         data = root.find(f'{{{NS}}}sheetData')
+        styles_xml = None
         for address, value in values.items():
             row_number = ''.join(c for c in address if c.isdigit())
             row = next((r for r in data if r.attrib['r'] == row_number), None)
@@ -171,6 +183,7 @@ def write_excel(template, destination, item, sheet, authorized_sha):
                 if child.tag in {f'{{{NS}}}v', f'{{{NS}}}is', f'{{{NS}}}f'}:
                     cell.remove(child)
             if isinstance(value, date):
+                if address == 'E8': styles_xml = date_style(source, cell)
                 value = to_excel(value, epoch)
             if isinstance(value, (float, int)) or address == 'A20':
                 cell.attrib['t'] = 'n'
@@ -188,11 +201,13 @@ def write_excel(template, destination, item, sheet, authorized_sha):
         for address in values:
             cell = next(c for row in data for c in row if c.attrib['r'] == address)
             replacement = ET.tostring(cell, encoding='unicode')
-            pattern = rf'<(?:\w+:)?c\b(?=[^>]*\br=[\"\']{address}[\"\'])[^>]*(?:/>|>.*?</(?:\w+:)?c>)'
+            # Lazy attributes are essential: a greedy match can consume '/'
+            # from an empty cell and then eat the following nonempty cell.
+            pattern = rf'<(?:\w+:)?c\b(?=[^>]*\br=[\"\']{address}[\"\'])[^>]*?(?:/>|>.*?</(?:\w+:)?c>)'
             original_xml, count = re.subn(pattern, lambda _: replacement, original_xml, count=1, flags=re.S)
             if not count:
                 row_number = re.search(r'\d+', address).group()
-                row_pattern = rf'(<(?:\w+:)?row\b(?=[^>]*\br=[\"\']{row_number}[\"\'])[^>]*)(/>|>.*?</(?:\w+:)?row>)'
+                row_pattern = rf'(<(?:\w+:)?row\b(?=[^>]*\br=[\"\']{row_number}[\"\'])[^>]*?)(/>|>.*?</(?:\w+:)?row>)'
                 def append_cell(match):
                     if match[2] == '/>':
                         prefix = re.match(r'<(\w+:)?row', match[1]).group(1) or ''
@@ -222,8 +237,26 @@ def write_excel(template, destination, item, sheet, authorized_sha):
         destination.parent.mkdir(parents=True, exist_ok=True)
         with destination.open('xb') as handle, ZipFile(handle, 'w', ZIP_DEFLATED) as output:
             for entry in source.infolist():
-                output.writestr(entry, original_xml.encode('utf-8') if entry.filename == part else source.read(entry.filename))
+                content = (original_xml.encode('utf-8') if entry.filename == part else
+                           styles_xml if entry.filename == 'xl/styles.xml' and styles_xml else source.read(entry.filename))
+                output.writestr(entry, content)
+    try:
+        verify_request_date(destination, sheet, item.request_date)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
     return destination
+
+
+def verify_request_date(path, sheet, expected):
+    wb = read_template(path)
+    try:
+        cell = wb[sheet]['E8']
+        value = cell.value.date() if hasattr(cell.value, 'date') else cell.value
+        if value != expected or cell.number_format != DATE_FORMAT:
+            raise ValueError('E8: data ou formato brasileiro não foi preservado após reabrir a cópia.')
+    finally:
+        wb.close()
 
 
 def write_excel_com(template, destination, values, sheet, epoch):
@@ -263,6 +296,7 @@ def write_excel_com(template, destination, values, sheet, epoch):
                 elif address == 'A20':
                     value = float(value)
                 ws.Range(address).Value = value
+                if address == 'E8': ws.Range(address).NumberFormat = DATE_FORMAT
                 if address in validations and not ws.Range(address).Validation.Value:
                     raise ValueError(f'{address}: valor rejeitado pela validação do Excel.')
             book.Save()

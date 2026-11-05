@@ -16,6 +16,7 @@ from cadastro_pcm.core.models import Item, Evidence, decimal_br, money_br
 from cadastro_pcm.core.settings import load_settings, save_settings
 from cadastro_pcm.core.pdf_reader import read_pdf
 from cadastro_pcm.core.item_extractor import extract_items
+from cadastro_pcm.core.product_text import clean_description
 from cadastro_pcm.core.excel_writer import inspect_template, write_excel, check_template
 from cadastro_pcm.core.pdf_exporter import export_pdf
 from cadastro_pcm.core.file_manager import new_output
@@ -39,8 +40,7 @@ class Worker(QThread):
 
 
 LABELS = {'name':'Nome', 'description':'Descrição técnica',
-    'unit_price':'Preço unitário', 'total_price':'Preço total (referência)', 'ncm':'NCM fiscal',
-    'manufacturer':'Fabricante', 'manufacturer_code':'Código fabricante',
+    'unit_price':'Preço unitário', 'ncm':'NCM fiscal',
     'requester':'Requisitante', 'area':'Área', 'request_date':'Data (AAAA-MM-DD)',
     'classification':'Classificação', 'unit':'Grupo UM', 'group':'Grupo de Itens',
     'purpose':'Finalidade', 'sap':'Código SAP', 'equipment':'Equip. Utilização',
@@ -76,7 +76,7 @@ class Editor(QDialog):
             evidence = item.evidence.get(key)
             origin = evidence.origin if evidence else ('pendente' if not text else 'regra')
             control.setToolTip(evidence.model_dump_json(indent=2) if evidence else origin)
-            group = 'Material e valores' if key in ('name', 'description', 'unit_price', 'total_price', 'ncm', 'manufacturer', 'manufacturer_code') else 'Cadastro e solicitação'
+            group = 'Material e valores' if key in ('name', 'description', 'unit_price', 'ncm') else 'Cadastro e solicitação'
             forms[group].addRow(f'{field_label} · {origin}', control)
             self.inputs[key] = control
         self.ncm_na = QCheckBox('NCM fiscal não se aplica a este item (confirmado pelo responsável).')
@@ -115,7 +115,7 @@ class Editor(QDialog):
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.settings = load_settings(); self.items = []; self.outputs = {}; self.worker = None
+        self.settings = load_settings(); self.items = []; self.outputs = {}; self.output_specs = {}; self.worker = None
         self.setStyleSheet(QSS)
         self.setWindowTitle('Cadastro PCM')
         self.resize(1440, 960); self.setMinimumSize(1050, 760); self.setAcceptDrops(True)
@@ -157,8 +157,8 @@ class Window(QMainWindow):
         self.process_button = button('Processar PDFs', self.process, True)
         review_header.addWidget(self.process_button); layout.addLayout(review_header)
         split = QSplitter(Qt.Horizontal)
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(['Material', 'Preço unitário', 'NCM', 'Fabricante', 'Origem', 'Validação'])
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(['Material', 'Preço unitário', 'NCM', 'Origem', 'Validação'])
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -184,7 +184,8 @@ class Window(QMainWindow):
         row = QHBoxLayout(); row.addWidget(label('Gerar documentos', 'section')); row.addStretch()
         self.excel_button = button('Gerar Excel', lambda: self.generate(False))
         self.pdf_button = button('Gerar Excel + PDF', lambda: self.generate(True), True)
-        row.addWidget(self.excel_button); row.addWidget(self.pdf_button); actions.addLayout(row)
+        self.retry_button = button('Exportar PDF do Excel salvo', self.retry_export)
+        row.addWidget(self.excel_button); row.addWidget(self.pdf_button); row.addWidget(self.retry_button); actions.addLayout(row)
         self.generation_hint = label('', 'muted'); actions.addWidget(self.generation_hint)
         row = QHBoxLayout(); row.addWidget(label('Conferir e finalizar', 'muted')); row.addStretch()
         self.preview_button = button('Visualizar PDF', self.preview)
@@ -288,7 +289,7 @@ class Window(QMainWindow):
                     statuses[path] = 'Erro'
             return items, warnings, statuses
         def done(result):
-            self.items, warnings, statuses = result; self.outputs = {}
+            self.items, warnings, statuses = result; self.outputs = {}; self.output_specs = {}
             for index in range(self.documents.count()):
                 entry = self.documents.item(index)
                 self.set_document_status(entry, statuses.get(self.document_path(index), 'Pendente'))
@@ -375,6 +376,9 @@ class Window(QMainWindow):
         self.excel_button.setToolTip(reason); self.pdf_button.setToolTip('\n'.join(filter(None, (reason, pdf_reason))))
         self.generation_hint.setText('\n'.join(filter(None, (reason, pdf_reason))))
         self.preview_button.setEnabled(bool(pdf)); self.print_button.setEnabled(bool(pdf))
+        saved = selected and row in self.outputs and (self.outputs[row] / 'cadastro.xlsx').is_file()
+        self.retry_button.setEnabled(bool(saved and not pdf and self.items[row].approved and sys.platform == 'win32'))
+        self.retry_button.setToolTip(('Exportar novamente sem preencher o Excel nem reprocessar a cotação.' if saved else 'Gere e salve o Excel do item antes de exportar.') + (' ' + pdf_reason if pdf_reason else ''))
         self.process_button.setEnabled(self.documents.count() > 0)
         self.remove_button.setEnabled(bool(self.documents.selectedItems()))
         self.source_button.setEnabled(bool(self.documents.selectedItems()))
@@ -384,11 +388,11 @@ class Window(QMainWindow):
         if 0 <= row < len(self.items):
             item = self.items[row]; status, tone = item_status(item)
             self.detail_badge.setText(status); self.detail_badge.setProperty('tone', tone)
-            lines = [item.name, '', 'DESCRIÇÃO TÉCNICA', item.description or 'Pendente', '',
+            lines = [item.name, '', 'DESCRIÇÃO TÉCNICA', clean_description(item.description) or 'Pendente', '',
                      f'Preço unitário: {money_br(item.unit_price)}', f'NCM fiscal: {item.ncm or "Pendente"}',
-                     f'Fabricante: {item.manufacturer or "Pendente"}', '', 'ORIGEM E EVIDÊNCIAS']
+                     '', 'ORIGEM E EVIDÊNCIAS']
             for field, evidence in item.evidence.items():
-                if field == 'quantity': continue
+                if field in ('quantity', 'total_price', 'manufacturer', 'manufacturer_code'): continue
                 lines.extend([f'{LABELS.get(field, field)} · {evidence.origin}', evidence.source, evidence.excerpt])
                 if evidence.estimated: lines.append('Estimativa — requer aprovação humana')
             lines.extend(item.warnings)
@@ -408,15 +412,15 @@ class Window(QMainWindow):
         self.table.setRowCount(len(self.items))
         for row, item in enumerate(self.items):
             status, tone = item_status(item)
-            values = [item.name, money_br(item.unit_price), item.ncm or 'Pendente', item.manufacturer or '—',
+            values = [item.name, money_br(item.unit_price), item.ncm or 'Pendente',
                       '; '.join(sorted({e.source for e in item.evidence.values() if e.source})), status]
             for col, value in enumerate(values):
                 cell = QTableWidgetItem(value); cell.setToolTip(value)
-                if col == 5:
+                if col == 4:
                     cell.setForeground(QColor({'success': '#88e2bb', 'warning': '#f2cb83', 'neutral': '#a7ccff'}[tone]))
                 if col == 1: cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.table.setItem(row, col, cell)
-        for col, width in enumerate((290, 130, 115, 125, 160, 170)):
+        for col, width in enumerate((340, 140, 125, 190, 170)):
             self.table.setColumnWidth(col, width)
         if self.items: self.table.selectRow(min(max(selected, 0), len(self.items) - 1))
         self.table.blockSignals(False)
@@ -440,7 +444,7 @@ class Window(QMainWindow):
         try:
             row, item = self.selected(); editor = Editor(item, self)
             if editor.exec():
-                self.items[row] = editor.result_item; self.outputs.pop(row, None); self.refresh()
+                self.items[row] = editor.result_item; self.outputs.pop(row, None); self.output_specs.pop(row, None); self.refresh()
         except ValueError as exc: QMessageBox.warning(self, 'Seleção', str(exc))
 
     def research(self):
@@ -449,7 +453,7 @@ class Window(QMainWindow):
         dialog = QDialog(self); dialog.setWindowTitle('Registrar fonte pesquisada manualmente')
         form = QFormLayout(dialog); form.addRow(QLabel(STATUS))
         field = QComboBox()
-        for key in ('ncm', 'unit_price', 'manufacturer', 'manufacturer_code', 'description'): field.addItem(LABELS[key], key)
+        for key in ('ncm', 'unit_price', 'description'): field.addItem(LABELS[key], key)
         value = QLineEdit(); url = QLineEdit(); estimated = QCheckBox('Valor estimado — exige aprovação')
         form.addRow('Campo', field); form.addRow('Novo valor', value); form.addRow('URL da fonte', url); form.addRow(estimated)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel); form.addRow(buttons)
@@ -458,7 +462,7 @@ class Window(QMainWindow):
             try:
                 key = field.currentData(); val = decimal_br(value.text()) if key == 'unit_price' else value.text()
                 if QMessageBox.question(self, 'Confirmar substituição', f'Substituir {LABELS[key]} e registrar a fonte?') != QMessageBox.Yes: return
-                self.items[row] = apply_suggestion(item, key, val, url.text(), estimated.isChecked()); self.outputs.pop(row, None); self.refresh()
+                self.items[row] = apply_suggestion(item, key, val, url.text(), estimated.isChecked()); self.outputs.pop(row, None); self.output_specs.pop(row, None); self.refresh()
             except Exception as exc: QMessageBox.warning(self, 'Pesquisa', str(exc))
 
     def diagnostics(self):
@@ -554,20 +558,49 @@ class Window(QMainWindow):
                     raise RuntimeError(f'Excel não gerado. Confira modelo, acesso ao Microsoft Excel e permissões de gravação: {exc}') from exc
                 if not Path(xlsx).is_file(): raise RuntimeError('O arquivo Excel não foi criado.')
                 (folder / 'registro.json').write_text(item.model_dump_json(indent=2), encoding='utf-8')
+                error = ''
                 if pdf:
                     try:
                         export_pdf(xlsx, folder / 'cadastro.pdf', settings.sheet, item.name, settings.expected_pages)
                         if not (folder / 'cadastro.pdf').is_file(): raise RuntimeError('O arquivo PDF não foi criado.')
                     except Exception as exc:
-                        raise RuntimeError(f'O Excel e o registro foram salvos em {folder}. O PDF não foi gerado: {exc}') from exc
-                return folder
-            def done(folder):
+                        error = f'O Excel e o registro foram salvos em {folder}. O PDF não foi gerado: {exc}. Use Exportar PDF do Excel salvo para tentar novamente.'
+                return folder, error
+            def done(result):
+                folder, error = result
                 self.outputs[row] = folder
+                self.output_specs[row] = (settings.sheet, item.name, settings.expected_pages)
                 self.update_actions()
+                if error:
+                    self.last_error = error
+                    QMessageBox.warning(self, 'PDF não gerado — Excel preservado', error)
+                    return
                 self.job_message = f'Geração concluída · {folder}'
                 QMessageBox.information(self, 'Arquivos gerados', f'{folder}\n' + ('Confira visualmente o PDF antes de imprimir: texto, Tipo e assinaturas.' if pdf else 'Excel e registro JSON salvos.'))
             self.run_job(task, done)
         except Exception as exc: QMessageBox.warning(self, 'Geração', str(exc))
+
+    def retry_export(self):
+        try:
+            row, item = self.selected(); item.require_ready()
+            folder = self.outputs.get(row)
+            if folder is None or not (folder / 'cadastro.xlsx').is_file():
+                raise ValueError('Excel salvo não encontrado. Gere o Excel deste item primeiro.')
+            sheet, name, pages = self.output_specs.get(row, (self.settings.sheet, item.name, self.settings.expected_pages))
+            def task():
+                try:
+                    export_pdf(folder / 'cadastro.xlsx', folder / 'cadastro.pdf', sheet, name, pages)
+                    if not (folder / 'cadastro.pdf').is_file(): raise RuntimeError('PDF não criado.')
+                except Exception as exc:
+                    raise RuntimeError(f'Excel preservado em {folder}. Nova exportação falhou: {exc}') from exc
+                return folder
+            def done(result):
+                self.job_message = f'PDF exportado · {result / "cadastro.pdf"}'
+                self.update_actions()
+                QMessageBox.information(self, 'PDF exportado', f'{result / "cadastro.pdf"}\nConfira legibilidade, logotipo, Tipo e assinaturas antes de imprimir.')
+            self.run_job(task, done)
+        except Exception as exc:
+            QMessageBox.warning(self, 'Exportar PDF', str(exc))
 
     def pdf_path(self):
         row, _ = self.selected(); path = self.outputs.get(row, Path('/__ausente__')) / 'cadastro.pdf'

@@ -2,12 +2,8 @@
 Textos não reconhecidos permanecem disponíveis para revisão manual.
 """
 import re
-import unicodedata
 from .models import Item, Evidence, decimal_br
-
-
-def normalize(value):
-    return re.sub(r'\s+', ' ', ''.join(c for c in unicodedata.normalize('NFD', value.lower()) if unicodedata.category(c) != 'Mn')).strip()
+from .product_text import normalize, commercial_line, clean_description
 
 
 ALIASES = {
@@ -15,8 +11,7 @@ ALIASES = {
     'quantity': ['quantidade', 'qtd', 'qtde', 'qt', 'qt.'],
     'unit_price': ['preco unitario', 'valor unitario', 'vl. unitario', 'vl unit', 'unitario', 'vl. unit.', 'vl unit.', 'preco unit.', 'valor unit.', 'preco unitario (r$)', 'valor unitario (r$)', 'r$ unit', 'r$ unit.', 'r$ unitario'],
     'total_price': ['preco total', 'valor total', 'total', 'r$ total'],
-    'ncm': ['ncm'], 'manufacturer': ['fabricante', 'marca'],
-    'manufacturer_code': ['codigo do fabricante', 'codigo', 'referencia'],
+    'ncm': ['ncm'],
     'description': ['descricao tecnica'],
 }
 
@@ -45,6 +40,15 @@ def separate_ncm(text):
 def make_item(values, page, excerpt):
     clean, warnings = {}, []
     values = dict(values)
+    name = str(values.get('name') or '').strip()
+    if not name or commercial_line(name.splitlines()[0]):
+        return None
+    for key in ('name', 'description'):
+        if values.get(key):
+            original = str(values[key])
+            values[key] = clean_description(original)
+            if values[key] != original.strip():
+                warnings.append('Trechos comerciais ou campos secundários foram omitidos; confira a evidência original.')
     codes = []
     for key in ('name', 'description'):
         if values.get(key):
@@ -93,7 +97,9 @@ class TableStrategy:
             header_index = None
             for index, row in enumerate(table[:5]):
                 candidates = [field_for(str(cell or '')) for cell in row]
-                if 'name' in candidates and sum(key is not None for key in candidates) >= 2:
+                recognized = [key for key in candidates if key]
+                if ('name' in candidates and len(recognized) >= 2
+                        and len(recognized) == len(set(recognized))):
                     headers, header_index = candidates, index
                     break
             if header_index is None:
@@ -103,12 +109,14 @@ class TableStrategy:
             for row in table[header_index + 1:]:
                 values = {key: row[i] for i, key in enumerate(headers) if key and i < len(row)}
                 name = str(values.get('name') or '').strip()
-                if normalize(name).startswith(('total', 'subtotal')):
+                if commercial_line(name) or normalize(name) in ('total', 'subtotal'):
                     if pending:
                         item = make_item(pending, page, str(excerpt))
                         if item: result.append(item)
                         pending = None
-                    continue
+                    # Commercial sections terminate item association, including
+                    # prices that happen to line up with the product columns.
+                    break
                 # Only append pure description continuation rows. Never copy numbers between rows.
                 other = [v for k, v in values.items() if k not in ('name', 'description') and str(v or '').strip()]
                 if not name and pending and values.get('description') and not other:
@@ -130,14 +138,31 @@ class LabelStrategy:
     def extract(self, page):
         result, values, lines = [], {}, []
         continuation = None
+        commercial_section = False
         # Normalize horizontal whitespace, preserving line and item boundaries.
         for raw in page.text.splitlines():
             line = re.sub(r'[^\S\n]+', ' ', raw).strip()
+            if re.fullmatch(r'(?:\d+[.)\s-]*)?(?:itens(?: da cotacao| / servicos)?|materiais|produtos|servicos|relacao de itens)', normalize(line)):
+                commercial_section = False
+                continuation = None
+                continue
             match = re.match(r'^([^:]{2,45}):\s*(.*?)\s*$', line)
             key = field_for(match[1]) if match else None
+            if (not key and commercial_line(line)) or (key == 'name' and commercial_line(match[2])):
+                item = make_item(values, page, '\n'.join(lines))
+                if item: result.append(item)
+                values, lines, continuation = {}, [], None
+                commercial_section = True
+                continue
+            if commercial_section:
+                if key == 'name' and normalize(match[1]) in ('produto', 'material', 'servico'):
+                    commercial_section = False
+                else:
+                    continue
             if not key:
                 if continuation and line and ':' not in line and not re.match(r'(?i)^(total|subtotal|frete|impostos|condicoes)\b', normalize(line)):
-                    values[continuation] += '\n' + line
+                    # Continuation belongs to technical detail, not the short name.
+                    values['description'] = values.get('description', values.get('name', '')) + '\n' + line
                     lines.append(line)
                 else:
                     continuation = None
@@ -173,7 +198,7 @@ def extract_items(pages):
     # Flag, never delete or merge, matching product identities across documents/pages.
     seen = {}
     for item in result:
-        key = (normalize(item.name), normalize(item.description), item.manufacturer_code)
+        key = (normalize(item.name), normalize(item.description))
         if key in seen:
             warning = 'Possível duplicata: confira documento, página, embalagem e quantidade.'
             item.warnings.append(warning)
