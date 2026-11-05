@@ -2,13 +2,14 @@ import json
 import os
 from datetime import date
 from pathlib import Path
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Literal
 
 
 class Settings(BaseModel):
     requester: str = ''
     area: str = 'MANUTENÇÃO'
-    date_policy: str = 'atual'
+    date_policy: Literal['atual', 'fixa'] = 'atual'
     fixed_date: date = date(2026, 1, 1)
     output: str = str(Path.home() / 'Documents' / 'CadastroPCM')
     template: str = ''
@@ -16,10 +17,15 @@ class Settings(BaseModel):
     unit: str = 'UNID'
     group: str = 'Material Manutenção'
     purpose: str = 'Item de compra'
+    sap: str = ''
+    equipment: str = ''
+    imported: Literal['Não', 'Sim'] = 'Não'
+    agency: str = 'Item de compra'
+    lower_ncm: str = 'SIM'
     sheet: str = 'Criação de Material Nacional'
     # Filled only after inspecting the actual corporate workbook.
     authorized_template_sha256: str = ''
-    expected_pages: int = 1
+    expected_pages: int = Field(default=1, ge=1)
 
 
 def settings_path():

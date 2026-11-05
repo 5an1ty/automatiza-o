@@ -1,4 +1,6 @@
 """Surgical OOXML edits retain unrelated workbook components byte-for-byte."""
+import sys
+import shutil
 import hashlib
 import json
 import posixpath
@@ -9,6 +11,8 @@ from datetime import date
 from openpyxl import load_workbook
 from openpyxl.cell.cell import MergedCell
 from openpyxl.utils.datetime import to_excel
+from .print_layout import print_area
+from .excel_runtime import excel_session
 
 MAP = {'requester':'C8', 'request_date':'E8', 'area':'C9', 'name':'A12',
        'description':'A14', 'classification':'A16', 'unit':'E16', 'group':'A18',
@@ -17,8 +21,19 @@ MAP = {'requester':'C8', 'request_date':'E8', 'area':'C9', 'name':'A12',
 NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
 
 
+def use_native_excel():
+    return sys.platform == 'win32'
+
+
 def fingerprint(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def layout_report(ws):
+    try:
+        return {'status': 'conferir visualmente', 'area': print_area(ws)}
+    except ValueError as exc:
+        return {'status': 'bloqueado', 'reason': str(exc)}
 
 
 def inspect_template(path):
@@ -29,6 +44,7 @@ def inspect_template(path):
                     'protected': ws.protection.sheet,
                     'merged': [str(r) for r in ws.merged_cells.ranges],
                     'print_area': str(ws.print_area),
+                    'print_layout_check': layout_report(ws),
                     'orientation': ws.page_setup.orientation,
                     'paper_size': ws.page_setup.paperSize,
                     'fit_width': ws.page_setup.fitToWidth,
@@ -109,8 +125,7 @@ def write_excel(template, destination, item, sheet, authorized_sha):
         if sheet not in wb.sheetnames:
             raise ValueError('Aba selecionada ausente no modelo.')
         ws = wb[sheet]
-        if not ws.print_area:
-            raise ValueError('Modelo sem área de impressão; solicite configuração corporativa.')
+        area = print_area(ws)
         if (item.imported == 'Sim') != ('importado' in sheet.lower()):
             raise ValueError('Item Importado? incompatível com a aba selecionada.')
         description = item.description
@@ -126,6 +141,8 @@ def write_excel(template, destination, item, sheet, authorized_sha):
         epoch = wb.epoch
     finally:
         wb.close()
+    if use_native_excel():
+        return write_excel_com(template, destination, values, sheet, epoch)
     with ZipFile(template) as source:
         workbook = ET.fromstring(source.read('xl/workbook.xml'))
         rels = ET.fromstring(source.read('xl/_rels/workbook.xml.rels'))
@@ -164,3 +181,49 @@ def write_excel(template, destination, item, sheet, authorized_sha):
             for entry in source.infolist():
                 output.writestr(entry, ET.tostring(root, encoding='utf-8', xml_declaration=True) if entry.filename == part else source.read(entry.filename))
     return destination
+
+
+def write_excel_com(template, destination, values, sheet, epoch):
+    """Write only on a fresh copy using native Excel. Failed copies are removed."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open('xb') as output, template.open('rb') as source:
+        shutil.copyfileobj(source, output)
+    try:
+        with excel_session(destination, read_only=False) as (_, book):
+            if book.ReadOnly:
+                raise ValueError('Cópia aberta somente para leitura. Verifique permissões da pasta.')
+            ws = book.Worksheets(sheet)
+            if ws.Range('C16').Value not in (None, ''):
+                raise ValueError('Campo Tipo deve estar vazio.')
+            for address in values:
+                cell = ws.Range(address)
+                if cell.HasFormula or (ws.ProtectContents and cell.Locked):
+                    raise ValueError(f'{address}: campo protegido ou fórmula; solicite modelo autorizado.')
+                if cell.MergeCells and cell.MergeArea.Cells(1, 1).Address != cell.Address:
+                    raise ValueError(f'{address}: endereço não é âncora da mesclagem.')
+            # Native validation includes extended validations not exposed by openpyxl.
+            validations = set()
+            try:
+                validated = ws.Cells.SpecialCells(-4174)  # xlCellTypeAllValidation
+            except Exception as exc:
+                # Error 1004 is expected only when no validated cells exist.
+                info = getattr(exc, 'excepinfo', None)
+                if not info or (info[5] & 0xffff) != 1004:
+                    raise ValueError('Não foi possível verificar as validações nativas do Excel.') from exc
+            else:
+                for address in values:
+                    if ws.Application.Intersect(ws.Range(address), validated) is not None:
+                        validations.add(address)
+            for address, value in values.items():
+                if isinstance(value, date):
+                    value = to_excel(value, epoch)
+                elif address == 'A20':
+                    value = float(value)
+                ws.Range(address).Value = value
+                if address in validations and not ws.Range(address).Validation.Value:
+                    raise ValueError(f'{address}: valor rejeitado pela validação do Excel.')
+            book.Save()
+        return destination
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise

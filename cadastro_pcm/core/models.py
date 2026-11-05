@@ -20,6 +20,8 @@ class Item(BaseModel):
     unit_price: Decimal | None = Field(default=None, ge=0)
     total_price: Decimal | None = Field(default=None, ge=0)
     ncm: str = ''
+    ncm_not_applicable: bool = False
+    warnings: list[str] = Field(default_factory=list)
     manufacturer: str = ''
     manufacturer_code: str = ''
     classification: str = 'Material'
@@ -51,12 +53,14 @@ class Item(BaseModel):
             raise ValueError('Revise e aprove o item antes de gerar.')
         if not self.name.strip() or not self.requester.strip():
             raise ValueError('Nome e requisitante são obrigatórios.')
+        if not self.ncm and not self.ncm_not_applicable:
+            raise ValueError('NCM fiscal pendente. Informe o código ou confirme que não se aplica no editor.')
         if self.unit_price is None:
             raise ValueError('Preço unitário pendente. Informe um valor confirmado.')
 
 
 def decimal_br(text):
-    value = str(text).strip().replace('R$', '').replace(' ', '')
+    value = re.sub(r'\s+', '', str(text).strip().replace('R$', ''))
     if ',' in value:
         value = value.replace('.', '').replace(',', '.')
     return Decimal(value)

@@ -78,9 +78,12 @@ class Editor(QDialog):
             group = 'Material e valores' if key in ('name', 'description', 'quantity', 'unit_price', 'total_price', 'ncm', 'manufacturer', 'manufacturer_code') else 'Cadastro e solicitação'
             forms[group].addRow(f'{field_label} · {origin}', control)
             self.inputs[key] = control
+        self.ncm_na = QCheckBox('NCM fiscal não se aplica a este item (confirmado pelo responsável).')
+        self.ncm_na.setChecked(item.ncm_not_applicable)
+        layout.addWidget(self.ncm_na)
         self.confirm = QCheckBox('Revisei todos os dados, fontes e estimativas; aprovo este item.')
         layout.addWidget(self.confirm)
-        layout.addWidget(QLabel('Tipo e assinaturas permanecem vazios. NCM ausente continua pendente.'))
+        layout.addWidget(QLabel('Tipo e assinaturas permanecem vazios. NCM ausente exige confirmação de não aplicabilidade.'))
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(lambda: self.save(item)); buttons.rejected.connect(self.reject)
         buttons.button(QDialogButtonBox.Save).setText('Salvar revisão')
@@ -98,8 +101,11 @@ class Editor(QDialog):
                 if str(value) != str(getattr(item, key)):
                     data['evidence'][key] = Evidence(origin='manual', source='Revisão do usuário').model_dump()
                 data[key] = value
+            data['ncm_not_applicable'] = self.ncm_na.isChecked()
             data['approved'] = self.confirm.isChecked()
             self.result_item = Item.model_validate(data)
+            if self.result_item.approved:
+                self.result_item.require_ready()
             self.accept()
         except Exception as exc:
             QMessageBox.warning(self, 'Dados inválidos', str(exc))
@@ -118,7 +124,7 @@ class Window(QMainWindow):
         headings.addWidget(label('Cadastro PCM', 'title'))
         headings.addWidget(label('Da cotação ao cadastro. Revise com confiança, gere com precisão.', 'muted'))
         header.addLayout(headings); header.addStretch()
-        header.addWidget(button('Configurações', self.configure)); layout.addLayout(header)
+        header.addWidget(button('Diagnóstico', self.diagnostics)); header.addWidget(button('Configurações', self.configure)); layout.addLayout(header)
         indicators = QHBoxLayout()
         self.model_indicator = badge('Modelo não configurado', 'warning')
         self.output_indicator = label('', 'muted')
@@ -280,7 +286,7 @@ class Window(QMainWindow):
         self.run_job(task, done)
 
     def apply_defaults(self, item):
-        for key in ('requester', 'area', 'classification', 'unit', 'group', 'purpose'):
+        for key in ('requester', 'area', 'classification', 'unit', 'group', 'purpose', 'sap', 'equipment', 'imported', 'agency', 'lower_ncm'):
             if key not in item.evidence:
                 setattr(item, key, getattr(self.settings, key))
                 item.evidence[key] = Evidence(origin='regra', source='Configurações locais')
@@ -342,8 +348,9 @@ class Window(QMainWindow):
             for field, evidence in item.evidence.items():
                 lines.extend([f'{LABELS.get(field, field)} · {evidence.origin}', evidence.source, evidence.excerpt])
                 if evidence.estimated: lines.append('Estimativa — requer aprovação humana')
+            lines.extend(item.warnings)
             lines.extend(['', 'OBSERVAÇÕES', 'Tipo e assinaturas permanecem vazios.'])
-            if not item.ncm: lines.append('NCM fiscal pendente: confira a aplicabilidade antes de gerar.')
+            if not item.ncm: lines.append('NCM fiscal: não aplicável confirmado.' if item.ncm_not_applicable else 'NCM fiscal pendente: confira a aplicabilidade antes de gerar.')
             if not item.approved: lines.append('Revise as informações e aprove no editor.')
             self.details.setPlainText('\n'.join(lines))
         else:
@@ -410,6 +417,26 @@ class Window(QMainWindow):
                 self.items[row] = apply_suggestion(item, key, val, url.text(), estimated.isChecked()); self.outputs.pop(row, None); self.refresh()
             except Exception as exc: QMessageBox.warning(self, 'Pesquisa', str(exc))
 
+    def diagnostics(self):
+        from cadastro_pcm.core.diagnostics import diagnose, save_report, summary
+        settings = self.settings.model_copy(deep=True)
+        def done(report):
+            dialog = QDialog(self); dialog.setWindowTitle('Diagnóstico local'); dialog.resize(760, 680)
+            layout = QVBoxLayout(dialog)
+            layout.addWidget(label('Verificação do ambiente e do modelo', 'section'))
+            text = QTextEdit(); text.setReadOnly(True); text.setPlainText(summary(report)); layout.addWidget(text)
+            save = QPushButton('Salvar relatório local…'); layout.addWidget(save)
+            def save_local():
+                path = QFileDialog.getSaveFileName(dialog, 'Salvar diagnóstico', 'diagnostico_pcm.json', 'JSON (*.json)')[0]
+                if path:
+                    try:
+                        save_report(report, path)
+                    except OSError:
+                        QMessageBox.warning(dialog, 'Relatório', 'Não foi possível salvar. Escolha uma pasta com permissão de gravação.')
+            save.clicked.connect(save_local)
+            dialog.exec()
+        self.run_job(lambda: diagnose(settings), done)
+
     def configure(self):
         dialog = QDialog(self); dialog.setWindowTitle('Configurações'); dialog.resize(780, 720)
         outer = QVBoxLayout(dialog); outer.setContentsMargins(24, 24, 24, 24); outer.setSpacing(16)
@@ -424,13 +451,13 @@ class Window(QMainWindow):
         form = forms['Modelo e saída']; controls = {}
         names = {'requester':'Requisitante padrão', 'area':'Área', 'date_policy':'Data: atual ou fixa', 'fixed_date':'Data fixa AAAA-MM-DD',
                  'output':'Pasta de saída', 'template':'Caminho do modelo Excel', 'sheet':'Aba do formulário',
-                 'classification':'Classificação', 'unit':'Grupo UM', 'group':'Grupo de Itens', 'purpose':'Finalidade', 'expected_pages':'Páginas esperadas'}
+                 'classification':'Classificação', 'unit':'Grupo UM', 'group':'Grupo de Itens', 'purpose':'Finalidade', 'sap':'Código SAP', 'equipment':'Equip. Utilização', 'imported':'Item Importado? (Não/Sim)', 'agency':'Órgão fiscalizador', 'lower_ncm':'NCM inferior', 'expected_pages':'Páginas esperadas'}
         for key, field_label in names.items():
             control = QLineEdit(str(getattr(self.settings, key)))
             if key == 'date_policy':
                 control = QComboBox(); control.addItems(['atual', 'fixa']); control.setCurrentText(self.settings.date_policy)
             controls[key] = control
-            section = 'Solicitante e data' if key in ('requester', 'area', 'date_policy', 'fixed_date') else ('Padrões do cadastro' if key in ('classification', 'unit', 'group', 'purpose') else 'Modelo e saída')
+            section = 'Solicitante e data' if key in ('requester', 'area', 'date_policy', 'fixed_date') else ('Padrões do cadastro' if key in ('classification', 'unit', 'group', 'purpose', 'sap', 'equipment', 'imported', 'agency', 'lower_ncm') else 'Modelo e saída')
             control.setToolTip(str(getattr(self.settings, key)))
             forms[section].addRow(field_label, control)
         pick = QPushButton('Selecionar modelo…'); form.addRow(pick)
@@ -479,7 +506,11 @@ class Window(QMainWindow):
                 folder = new_output(settings.output, item.name)
                 xlsx = write_excel(settings.template, folder / 'cadastro.xlsx', item, settings.sheet, settings.authorized_template_sha256)
                 (folder / 'registro.json').write_text(item.model_dump_json(indent=2), encoding='utf-8')
-                if pdf: export_pdf(xlsx, folder / 'cadastro.pdf', settings.sheet, item.name, settings.expected_pages)
+                if pdf:
+                    try:
+                        export_pdf(xlsx, folder / 'cadastro.pdf', settings.sheet, item.name, settings.expected_pages)
+                    except Exception as exc:
+                        raise RuntimeError(f'O Excel e o registro foram salvos em {folder}. O PDF não foi gerado: {exc}') from exc
                 return folder
             def done(folder):
                 self.outputs[row] = folder

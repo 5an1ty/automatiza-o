@@ -3,3 +3,9 @@ __pycache__/
 .pytest_cache/
 output/
 *.log
+# Documentos corporativos e relatórios locais nunca devem ir ao GitHub.
+*.pdf
+*.xlsx
+*.xlsm
+inspecao*.json
+diagnostico*.json

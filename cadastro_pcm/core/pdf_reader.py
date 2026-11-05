@@ -19,6 +19,9 @@ def read_pdf(path):
         for index, page in enumerate(doc):
             text = page.get_text(sort=True)
             tables = [table.extract() for table in page.find_tables().tables] if text.strip() else []
+            if text.strip() and not tables:
+                # Word-aligned table strategy handles columns without ruling lines.
+                tables = [table.extract() for table in page.find_tables(strategy='text', min_words_vertical=2, min_words_horizontal=1).tables]
             pages.append(Page(str(Path(path).resolve()), index + 1, text, tables))
     if not any(page.text.strip() for page in pages):
         raise ValueError(f'{Path(path).name}: sem texto extraível. OCR necessário; não disponível nesta versão.')
