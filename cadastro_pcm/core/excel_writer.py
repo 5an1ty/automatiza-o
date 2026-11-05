@@ -2,17 +2,16 @@
 import sys
 import shutil
 import hashlib
-import json
-import posixpath
+import re
 from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED
 from xml.etree import ElementTree as ET
 from datetime import date
-from openpyxl import load_workbook
 from openpyxl.cell.cell import MergedCell
 from openpyxl.utils.datetime import to_excel
 from .print_layout import print_area
 from .excel_runtime import excel_session
+from .template_reader import read_template, sheet_parts
 
 MAP = {'requester':'C8', 'request_date':'E8', 'area':'C9', 'name':'A12',
        'description':'A14', 'classification':'A16', 'unit':'E16', 'group':'A18',
@@ -37,7 +36,7 @@ def layout_report(ws):
 
 
 def inspect_template(path):
-    wb = load_workbook(path, data_only=False)
+    wb = read_template(path)
     try:
         return {'sha256': fingerprint(path), 'mapping_preliminary': MAP,
                 'sheets': {ws.title: {
@@ -107,25 +106,24 @@ def validate_cells(wb, ws, values):
             if value in ('', None) and validation.allowBlank:
                 continue
             if validation.type == 'list':
-                if str(value) not in allowed_values(wb, ws, validation.formula1):
+                if str(value).casefold() not in {v.casefold() for v in allowed_values(wb, ws, validation.formula1)}:
                     raise ValueError(f'{address}: valor {value!r} não permitido na lista.')
             elif validation.type:
                 raise ValueError(f'{address}: validação {validation.type} requer suporte específico; gravação bloqueada.')
 
 
-def write_excel(template, destination, item, sheet, authorized_sha):
+def check_template(template, item, sheet, authorized_sha):
+    """Same preflight for button explanations and writing; never modifies input."""
     item.require_ready()
-    template, destination = Path(template), Path(destination)
-    if template.resolve() == destination.resolve() or destination.exists():
-        raise ValueError('Destino existente ou igual ao modelo; gravação recusada.')
+    template = Path(template)
     if not authorized_sha or fingerprint(template) != authorized_sha:
         raise ValueError('Inspecione e autorize o mapeamento deste modelo nas Configurações.')
-    wb = load_workbook(template, data_only=False)
+    wb = read_template(template)
     try:
         if sheet not in wb.sheetnames:
             raise ValueError('Aba selecionada ausente no modelo.')
         ws = wb[sheet]
-        area = print_area(ws)
+        print_area(ws)
         if (item.imported == 'Sim') != ('importado' in sheet.lower()):
             raise ValueError('Item Importado? incompatível com a aba selecionada.')
         description = item.description
@@ -137,20 +135,28 @@ def write_excel(template, destination, item, sheet, authorized_sha):
             description += '\nNCM fiscal informado: ' + item.ncm
         values = {address: getattr(item, field) for field, address in MAP.items()}
         values['A14'] = description
+        # An empty optional field already empty in the template needs no edit.
+        # Preserve it instead of reassigning a blank through a restrictive list.
+        values = {address: value for address, value in values.items()
+                  if value not in ('', None) or ws[address].value not in ('', None)}
         validate_cells(wb, ws, values)
         epoch = wb.epoch
     finally:
         wb.close()
+    return values, epoch
+
+
+def write_excel(template, destination, item, sheet, authorized_sha):
+    template, destination = Path(template), Path(destination)
+    if template.resolve() == destination.resolve() or destination.exists():
+        raise ValueError('Destino existente ou igual ao modelo; gravação recusada.')
+    values, epoch = check_template(template, item, sheet, authorized_sha)
     if use_native_excel():
         return write_excel_com(template, destination, values, sheet, epoch)
     with ZipFile(template) as source:
-        workbook = ET.fromstring(source.read('xl/workbook.xml'))
-        rels = ET.fromstring(source.read('xl/_rels/workbook.xml.rels'))
-        relation = next(s for s in workbook.find(f'{{{NS}}}sheets') if s.attrib['name'] == sheet)
-        rid = relation.attrib['{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id']
-        target = next(r.attrib['Target'] for r in rels if r.attrib['Id'] == rid)
-        part = target.lstrip('/') if target.startswith('/') else posixpath.normpath('xl/' + target)
-        root = ET.fromstring(source.read(part))
+        part = sheet_parts(source)[sheet]
+        original_xml = source.read(part).decode('utf-8')
+        root = ET.fromstring(original_xml)
         data = root.find(f'{{{NS}}}sheetData')
         for address, value in values.items():
             row_number = ''.join(c for c in address if c.isdigit())
@@ -176,10 +182,47 @@ def write_excel(template, destination, item, sheet, authorized_sha):
                 text.text = str(value or '')
             from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
             row[:] = sorted(row, key=lambda c: column_index_from_string(coordinate_from_string(c.attrib['r'])[0]))
+        # Replace only destination cells. Reserializing the full sheet can drop
+        # namespace declarations referenced by mc:Ignorable / Excel extensions.
+        # Keep the original root, x14 validations, drawings and all other XML.
+        for address in values:
+            cell = next(c for row in data for c in row if c.attrib['r'] == address)
+            replacement = ET.tostring(cell, encoding='unicode')
+            pattern = rf'<(?:\w+:)?c\b(?=[^>]*\br=[\"\']{address}[\"\'])[^>]*(?:/>|>.*?</(?:\w+:)?c>)'
+            original_xml, count = re.subn(pattern, lambda _: replacement, original_xml, count=1, flags=re.S)
+            if not count:
+                row_number = re.search(r'\d+', address).group()
+                row_pattern = rf'(<(?:\w+:)?row\b(?=[^>]*\br=[\"\']{row_number}[\"\'])[^>]*)(/>|>.*?</(?:\w+:)?row>)'
+                def append_cell(match):
+                    if match[2] == '/>':
+                        prefix = re.match(r'<(\w+:)?row', match[1]).group(1) or ''
+                        return match[1] + '>' + replacement + f'</{prefix}row>'
+                    # Insert in column order, before the first later cell.
+                    from openpyxl.utils.cell import column_index_from_string
+                    column = column_index_from_string(re.match(r'[A-Z]+', address).group())
+                    body = match[2]
+                    for later in re.finditer(r'<(?:\w+:)?c\b[^>]*\br=[\"\']([A-Z]+)\d+[\"\']', body):
+                        if column_index_from_string(later[1]) > column:
+                            return match[1] + body[:later.start()] + replacement + body[later.start():]
+                    return match[1] + re.sub(r'(</(?:\w+:)?row>)$', lambda m: replacement + m[1], body)
+                original_xml, count = re.subn(row_pattern, append_cell, original_xml, count=1, flags=re.S)
+                if not count:
+                    opening = re.search(r'<((?:\w+:)?sheetData)\b[^>]*>', original_xml)
+                    if not opening:
+                        raise ValueError('Estrutura sheetData ausente no modelo.')
+                    prefix = opening[1].removesuffix('sheetData')
+                    new_row = f'<{prefix}row r="{row_number}">{replacement}</{prefix}row>'
+                    later = next((m for m in re.finditer(r'<(?:\w+:)?row\b[^>]*\br=[\"\'](\d+)[\"\']', original_xml)
+                                  if int(m[1]) > int(row_number)), None)
+                    if opening[0].endswith('/>'):
+                        original_xml = original_xml[:opening.start()] + opening[0][:-2] + '>' + new_row + f'</{opening[1]}>' + original_xml[opening.end():]
+                    else:
+                        position = later.start() if later else original_xml.index(f'</{opening[1]}>')
+                        original_xml = original_xml[:position] + new_row + original_xml[position:]
         destination.parent.mkdir(parents=True, exist_ok=True)
         with destination.open('xb') as handle, ZipFile(handle, 'w', ZIP_DEFLATED) as output:
             for entry in source.infolist():
-                output.writestr(entry, ET.tostring(root, encoding='utf-8', xml_declaration=True) if entry.filename == part else source.read(entry.filename))
+                output.writestr(entry, original_xml.encode('utf-8') if entry.filename == part else source.read(entry.filename))
     return destination
 
 

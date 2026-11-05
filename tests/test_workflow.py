@@ -42,7 +42,7 @@ def test_pdf_labels_multiple_and_unit_price(tmp_path):
     assert len(items) == 2
     assert items[0].unit_price == Decimal('239')
     assert items[0].total_price == Decimal('2151')
-    assert items[0].quantity == 9 and items[0].ncm == '40169300'
+    assert items[0].quantity == 9 and items[0].ncm == '4016.93.00'
     assert items[1].name == 'Parafuso'
     assert 'página 1' in items[0].evidence['unit_price'].source
 
@@ -81,7 +81,7 @@ def test_excel_copy_integrity(template, tmp_path):
     assert ws['A12'].value == 'Gaxeta 16' and ws['A20'].value == 239
     assert ws['C16'].value is None and ws['A27'].value is None
     assert ws['F30'].value == '=1+1' and ws.protection.sheet
-    assert '40169300' in ws['A14'].value and ws['E22'].value == 'SIM'
+    assert '4016.93.00' in ws['A14'].value and ws['E22'].value == 'SIM'
     assert wb.worksheets[1]['A1'].value == 'Não modificar'
     assert list(ws.merged_cells.ranges) and ws.print_area
     wb.close()
@@ -160,7 +160,7 @@ def test_gui_review(monkeypatch):
     app = QApplication.instance() or QApplication([])
     window = main_window.Window()
     item = approved(); window.items = [item]; window.refresh()
-    assert window.table.item(0, 2).text() == 'R$ 239,00'
+    assert window.table.item(0, 1).text() == 'R$ 239,00'
     editor = main_window.Editor(item, window)
     editor.inputs['name'].setText('Nome corrigido')
     editor.confirm.setChecked(True); editor.save(item)
@@ -169,14 +169,14 @@ def test_gui_review(monkeypatch):
     editor.deleteLater(); window.deleteLater(); app.processEvents()
 
 
-def test_interface_selection_and_actions(monkeypatch, tmp_path):
+def test_interface_selection_and_actions(monkeypatch, tmp_path, template):
     monkeypatch.setenv('QT_QPA_PLATFORM', 'offscreen')
     from PySide6.QtWidgets import QApplication
     from cadastro_pcm.core.settings import Settings
     from cadastro_pcm.interface import main_window
     app = QApplication.instance() or QApplication([])
-    model = tmp_path / 'modelo.xlsx'; model.touch()
-    monkeypatch.setattr(main_window, 'load_settings', lambda: Settings(requester='Revisor', template=str(model), authorized_template_sha256='teste'))
+    model = template
+    monkeypatch.setattr(main_window, 'load_settings', lambda: Settings(requester='Revisor', template=str(model), authorized_template_sha256=fingerprint(model)))
     window = main_window.Window()
     assert not window.edit_button.isEnabled()
     assert not window.process_button.isEnabled()

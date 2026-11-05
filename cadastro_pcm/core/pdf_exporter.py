@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 import pymupdf
-from openpyxl import load_workbook
+from .template_reader import read_template
 from .excel_runtime import excel_session
 from .print_layout import print_area, configure_page
 
@@ -25,7 +25,7 @@ def export_pdf(workbook, destination, sheet, name, expected_pages=1):
     destination = Path(destination).resolve()
     if destination.exists() or destination == Path(workbook).resolve():
         raise ValueError('PDF de destino já existe ou coincide com a entrada.')
-    wb = load_workbook(workbook, data_only=False)
+    wb = read_template(workbook)
     try:
         area = print_area(wb[sheet])
     finally:

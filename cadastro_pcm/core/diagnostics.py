@@ -5,7 +5,7 @@ import platform
 import sys
 import tempfile
 from pathlib import Path
-from openpyxl import load_workbook
+from .template_reader import read_template
 from openpyxl.cell.cell import MergedCell
 from .excel_writer import MAP, fingerprint
 from .excel_runtime import excel_session
@@ -38,7 +38,7 @@ def diagnose(settings):
     try:
         if not settings.template or not Path(settings.template).is_file():
             raise ValueError('missing')
-        wb = load_workbook(settings.template, data_only=False)
+        wb = read_template(settings.template)
         try:
             missing = [name for name in REQUIRED_SHEETS if name not in wb.sheetnames]
             add('Abas corporativas', 'erro' if missing else 'ok', 'Abas ausentes: ' + ', '.join(missing) if missing else 'Todas as abas esperadas foram encontradas.')

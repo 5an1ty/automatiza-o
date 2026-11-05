@@ -13,8 +13,8 @@ def normalize(value):
 ALIASES = {
     'name': ['descricao', 'produto', 'material', 'servico', 'descricao do produto'],
     'quantity': ['quantidade', 'qtd', 'qtde', 'qt', 'qt.'],
-    'unit_price': ['preco unitario', 'valor unitario', 'vl. unitario', 'vl unit', 'unitario', 'vl. unit.', 'vl unit.', 'preco unit.', 'valor unit.', 'preco unitario (r$)', 'valor unitario (r$)'],
-    'total_price': ['preco total', 'valor total', 'total'],
+    'unit_price': ['preco unitario', 'valor unitario', 'vl. unitario', 'vl unit', 'unitario', 'vl. unit.', 'vl unit.', 'preco unit.', 'valor unit.', 'preco unitario (r$)', 'valor unitario (r$)', 'r$ unit', 'r$ unit.', 'r$ unitario'],
+    'total_price': ['preco total', 'valor total', 'total', 'r$ total'],
     'ncm': ['ncm'], 'manufacturer': ['fabricante', 'marca'],
     'manufacturer_code': ['codigo do fabricante', 'codigo', 'referencia'],
     'description': ['descricao tecnica'],
@@ -23,11 +23,45 @@ ALIASES = {
 
 def field_for(label):
     label = normalize(label).rstrip(': .')
-    return next((key for key, names in ALIASES.items() if label in names), None)
+    return next((key for key, names in ALIASES.items() if label in [name.rstrip(': .') for name in names]), None)
+
+
+def separate_ncm(text):
+    """Only item descriptions: explicit fiscal labels or a separated leading code.
+
+    Never search document-level numbers, manufacturer codes or telephone fields.
+    """
+    codes = []
+    def remove(match):
+        codes.append(Item(ncm=match['code']).ncm)
+        return ''
+    text = re.sub(r'\(?\bNCM\s*:?\s*(?P<code>\d{4}\.\d{2}\.\d{2}|\d{8})(?![\w.])\)?', remove, text, flags=re.I)
+    if not codes:
+        text = re.sub(r'^\s*(?P<code>\d{4}\.\d{2}\.\d{2}|\d{8})\s*[-–—]\s*(?=\D)', remove, text)
+    text = re.sub(r'^[\s\-–—:;]+|[\s\-–—:;]+$', '', text)
+    return text.strip(), codes
 
 
 def make_item(values, page, excerpt):
     clean, warnings = {}, []
+    values = dict(values)
+    codes = []
+    for key in ('name', 'description'):
+        if values.get(key):
+            values[key], found = separate_ncm(str(values[key]))
+            codes.extend(found)
+    if values.get('ncm'):
+        try:
+            codes.append(Item(ncm=str(values['ncm']).strip()).ncm)
+        except ValueError:
+            warnings.append('NCM: valor não reconhecido; confira o documento original.')
+            codes.append('')
+    if codes:
+        if len(set(codes)) == 1 and codes[0]:
+            values['ncm'] = codes[0]
+        else:
+            values['ncm'] = ''
+            warnings.append('NCM divergente na linha do item; confira o código fiscal no documento.')
     for key, value in values.items():
         if not value or not str(value).strip():
             continue
@@ -43,6 +77,11 @@ def make_item(values, page, excerpt):
         return None
     clean.setdefault('description', clean['name'])
     item = Item(**clean, warnings=warnings)
+    if item.unit_price is None:
+        item.warnings.append('Preço unitário não identificado com confiança. Total, IPI e quantidade não substituem o unitário; revise o PDF.')
+    if item.quantity is not None and item.unit_price is not None and item.total_price is not None:
+        if abs(item.quantity * item.unit_price - item.total_price) > decimal_br('0,01'):
+            item.warnings.append('Quantidade × unitário difere do total; confira impostos e descontos. Valores extraídos foram preservados.')
     item.evidence = {key: Evidence(origin='pdf', source=f'{page.source} — página {page.number}', excerpt=excerpt) for key in clean}
     return item
 

@@ -23,14 +23,14 @@ informe seu nome na primeira execução. Logs podem conter caminhos corporativos
 
 ## Modelo oficial: inspeção obrigatória
 
-Os três documentos de referência **não foram fornecidos** nesta sessão:
+Para homologação, mantenha o modelo oficial, a cotação original e um PDF
+preenchido de referência fora do checkout. Não adicione documentos corporativos,
+relatórios detalhados nem cópias preenchidas ao GitHub.
 
-- `tela de cadastro.xlsx`
-- `exemplo de solicitação.pdf`
-- `ADESIVO TRAVA ROLAMENTO LOCTITE 648 50 ML HENKEL(1).pdf`
-
-Não foi possível confirmar o mapeamento nem a aparência real. Nenhum modelo
-corporativo foi recriado. Testes usam documentos sintéticos, exclusivamente.
+O mapeamento abaixo foi conferido estruturalmente contra o modelo disponibilizado
+na etapa Prompt 04. Isso não substitui a autorização humana de cada versão do
+modelo nem a conferência visual da saída do Excel no Windows. Nenhum modelo
+corporativo foi recriado; os testes publicados usam documentos sintéticos.
 
 Em **Configurações**, selecione o modelo e a aba nacional ou importada. Use
 **Inspecionar modelo** para salvar um relatório JSON de todas as abas, células,
@@ -162,7 +162,8 @@ Para validar no Windows: execute o aplicativo, processe a cotação real, confir
 itens (Gaxeta 16: quantidade 9, unitário 239,00 e total 2.151,00, conforme o pedido),
 autorize o modelo após inspeção e gere PDF. Compare visualmente ao exemplo real,
 confira apenas a aba pertinente, páginas, quebras e campos manuais vazios.
-Este teste real ainda não foi realizado; Linux não oferece Excel COM.
+A extração da cotação real e a escrita OOXML em cópia do modelo foram verificadas
+no Linux na etapa Prompt 04; a exportação real via Excel COM permanece pendente.
 
 ## Arquivos
 
@@ -243,10 +244,65 @@ em Python 3.12 no Linux, sem comprovar a instalação das dependências em 3.14.
 
 ### Resultado desta etapa
 
-Documentos oficiais não estavam disponíveis. Exportação real pelo Excel **não foi
-executada** no ambiente Linux. Testes automatizados utilizam somente PDFs e XLSX
+Na validação inicial, os documentos oficiais não estavam disponíveis. Na etapa
+Prompt 04, os anexos foram inspecionados localmente, sem publicação. Exportação
+real pelo Excel **não foi executada** no ambiente Linux. Testes automatizados utilizam somente PDFs e XLSX
 sintéticos; casos COM usam objetos simulados explicitamente. Incluem colunas sem
 bordas, descrições multilinha, duplicatas, múltiplas páginas, campos ausentes,
 NCM, persistência, limites de impressão, falha de exportação, limpeza e proteção.
 Os testes portáveis não iniciam Excel mesmo quando executados no Windows.
 Não há OCR, consulta automática, transmissão externa ou homologação fiscal automática.
+
+
+## Prompt 04 — correções do fluxo principal
+
+- A extração reconhece os cabeçalhos `R$ Unit.` e `R$ Total`, mantendo a
+  associação posicional das células da tabela, inclusive a coluna vazia de código
+  e a coluna de IPI. Total e impostos nunca substituem o preço unitário.
+- NCM rotulado no início, final ou entre parênteses é separado do nome/descrição.
+  Um código inicial separado por hífen também é reconhecido. O formato armazenado
+  e exibido é `XXXX.XX.XX`; a evidência conserva o trecho original. Códigos
+  divergentes ficam pendentes. Números de contato e códigos de fabricante não
+  são usados como fonte de NCM. Isso não valida a classificação fiscal.
+- Quantidade permanece interna, no registro JSON e na verificação de coerência
+  do total; não ocupa coluna, campo de edição ou célula no formulário.
+- Ao importar, o primeiro PDF é selecionado quando não houver seleção. Remover
+  e Ver texto seguem a seleção real. Remover uma entrada preserva itens extraídos,
+  revisões e arquivos já gerados. Reprocessar substitui a lista somente após
+  confirmação; exibe conclusão, ausência de itens ou causa da falha.
+- A área Gerar documentos mostra os campos pendentes, a necessidade de aprovação
+  ou o problema do modelo. O mesmo preflight verifica hash, aba, proteção, listas
+  e impressão antes da habilitação e novamente antes de escrever. A verificação
+  preliminar não comprova instalação do Excel nem permissão de escrita na saída;
+  falhas nessas operações são apresentadas durante a geração e no Diagnóstico.
+- A inspeção inclui listas estendidas `x14` do Excel. Campos opcionais já vazios
+  no modelo permanecem intactos, em vez de receber uma nova atribuição vazia
+  incompatível com uma lista. Valores preenchidos continuam sujeitos às listas,
+  incluindo a validação nativa no Windows. Proteções não são removidas.
+- No backend OOXML de testes, somente as células mapeadas são substituídas; o
+  restante do XML, namespaces, extensões e componentes do arquivo são preservados.
+  No Windows, continua sendo usada uma cópia editada pelo Microsoft Excel.
+- Sucesso exige a existência dos arquivos. Uma falha na exportação indica a
+  pasta do Excel e do registro preservados, sem anunciar um PDF inexistente.
+
+### Validação desta correção
+
+Com Python 3.12/Linux: **52 testes passaram**, incluindo os 34 casos anteriores
+com ajustes para o NCM formatado, a coluna removida e o preflight mais rigoroso.
+Os novos casos usam exclusivamente documentos sintéticos e exercitam também os
+workers reais da interface, seleção, visualização de texto, reprocessamento,
+edição, aprovação, bloqueios e gravação de Excel pelo botão de geração.
+
+Os arquivos oficiais disponibilizados foram usados somente em validação local:
+a cotação produziu Gaxeta 16, unitário 239,00, total 2.151,00 e NCM 4016.93.00.
+O fluxo da interface gerou uma cópia OOXML de teste do modelo, preservando os
+originais, proteção, sete listas estendidas da aba, Tipo e assinaturas vazios e
+todos os componentes ZIP fora da aba preenchida. A aprovação nesse ensaio foi
+apenas de teste; não configura autorização ou homologação corporativa.
+
+O PDF preenchido fornecido é referência visual, não uma exportação produzida
+pelo programa nesta máquina. A4, orientação vertical e uma página de largura
+continuam sendo as opções de exportação solicitadas. **Excel COM e geração real
+de PDF permanecem pendentes de execução no Windows**, assim como equivalência
+visual, legibilidade, logotipo, assinaturas e quebras. Os testes COM publicados
+usam simulações. Python 3.14 no Windows não foi executado neste ambiente.

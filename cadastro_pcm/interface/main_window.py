@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import sys
 from datetime import date
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal, QUrl, Qt
@@ -15,7 +16,7 @@ from cadastro_pcm.core.models import Item, Evidence, decimal_br, money_br
 from cadastro_pcm.core.settings import load_settings, save_settings
 from cadastro_pcm.core.pdf_reader import read_pdf
 from cadastro_pcm.core.item_extractor import extract_items
-from cadastro_pcm.core.excel_writer import inspect_template, write_excel
+from cadastro_pcm.core.excel_writer import inspect_template, write_excel, check_template
 from cadastro_pcm.core.pdf_exporter import export_pdf
 from cadastro_pcm.core.file_manager import new_output
 from cadastro_pcm.core.research import STATUS, apply_suggestion
@@ -37,7 +38,7 @@ class Worker(QThread):
             self.failed.emit(str(exc))
 
 
-LABELS = {'name':'Nome', 'description':'Descrição técnica', 'quantity':'Quantidade',
+LABELS = {'name':'Nome', 'description':'Descrição técnica',
     'unit_price':'Preço unitário', 'total_price':'Preço total (referência)', 'ncm':'NCM fiscal',
     'manufacturer':'Fabricante', 'manufacturer_code':'Código fabricante',
     'requester':'Requisitante', 'area':'Área', 'request_date':'Data (AAAA-MM-DD)',
@@ -75,7 +76,7 @@ class Editor(QDialog):
             evidence = item.evidence.get(key)
             origin = evidence.origin if evidence else ('pendente' if not text else 'regra')
             control.setToolTip(evidence.model_dump_json(indent=2) if evidence else origin)
-            group = 'Material e valores' if key in ('name', 'description', 'quantity', 'unit_price', 'total_price', 'ncm', 'manufacturer', 'manufacturer_code') else 'Cadastro e solicitação'
+            group = 'Material e valores' if key in ('name', 'description', 'unit_price', 'total_price', 'ncm', 'manufacturer', 'manufacturer_code') else 'Cadastro e solicitação'
             forms[group].addRow(f'{field_label} · {origin}', control)
             self.inputs[key] = control
         self.ncm_na = QCheckBox('NCM fiscal não se aplica a este item (confirmado pelo responsável).')
@@ -142,6 +143,7 @@ class Window(QMainWindow):
         entry.addWidget(drop, 1)
         file_area = QVBoxLayout()
         self.documents = QListWidget(); self.documents.setMinimumHeight(90); self.documents.setMaximumHeight(125)
+        self.documents.setSelectionMode(QListWidget.SingleSelection)
         file_area.addWidget(self.documents)
         file_actions = QHBoxLayout()
         self.remove_button = button('Remover', self.remove_file)
@@ -155,8 +157,8 @@ class Window(QMainWindow):
         self.process_button = button('Processar PDFs', self.process, True)
         review_header.addWidget(self.process_button); layout.addLayout(review_header)
         split = QSplitter(Qt.Horizontal)
-        self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(['Descrição', 'Quantidade', 'Preço unitário', 'NCM', 'Fabricante', 'Origem', 'Validação'])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(['Material', 'Preço unitário', 'NCM', 'Fabricante', 'Origem', 'Validação'])
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -183,6 +185,7 @@ class Window(QMainWindow):
         self.excel_button = button('Gerar Excel', lambda: self.generate(False))
         self.pdf_button = button('Gerar Excel + PDF', lambda: self.generate(True), True)
         row.addWidget(self.excel_button); row.addWidget(self.pdf_button); actions.addLayout(row)
+        self.generation_hint = label('', 'muted'); actions.addWidget(self.generation_hint)
         row = QHBoxLayout(); row.addWidget(label('Conferir e finalizar', 'muted')); row.addStretch()
         self.preview_button = button('Visualizar PDF', self.preview)
         self.print_button = button('Imprimir…', self.print_pdf)
@@ -192,7 +195,7 @@ class Window(QMainWindow):
         layout.addWidget(self.progress)
         self.status = label('Nenhum PDF carregado · Nenhum item identificado ainda', 'muted')
         layout.addWidget(self.status)
-        self.documents.currentRowChanged.connect(lambda *_: self.update_actions())
+        self.documents.itemSelectionChanged.connect(self.update_actions)
         self.update_indicators(); self.update_actions()
         if not self.settings.requester:
             from PySide6.QtCore import QTimer
@@ -213,24 +216,30 @@ class Window(QMainWindow):
                 entry.setData(Qt.UserRole, path)
                 self.documents.addItem(entry); self.set_document_status(entry, 'Pendente')
                 existing.add(path)
+        if self.documents.count() and not self.documents.selectedItems():
+            self.documents.setCurrentRow(0)
         self.update_summary(); self.update_actions()
 
     def add_files(self):
         self.add_paths(QFileDialog.getOpenFileNames(self, 'Selecionar PDFs', '', 'PDF (*.pdf)')[0])
 
     def view_source(self):
-        entry = self.documents.currentItem()
-        if entry is None:
+        selected = self.documents.selectedItems()
+        if not selected:
             return
+        path = selected[0].data(Qt.UserRole)
         def done(pages):
             dialog = QDialog(self); dialog.setWindowTitle('Texto extraído — revisão manual'); dialog.resize(850, 700)
             layout = QVBoxLayout(dialog); text = QTextEdit(); text.setReadOnly(True)
             text.setPlainText('\n\n'.join(f'Página {p.number}\n{p.text}' for p in pages))
             layout.addWidget(text); dialog.exec()
-        self.run_job(lambda: read_pdf(entry.data(Qt.UserRole)), done)
+        self.run_job(lambda: read_pdf(path), done)
 
     def remove_file(self):
-        self.documents.takeItem(self.documents.currentRow())
+        selected = self.documents.selectedItems()
+        if not selected: return
+        # Extracted/reviewed items and outputs remain independent of the input list.
+        self.documents.takeItem(self.documents.row(selected[0]))
         self.update_summary(); self.update_actions()
 
     def run_job(self, function, callback):
@@ -239,6 +248,7 @@ class Window(QMainWindow):
         self.centralWidget().setEnabled(False)
         self.progress.show()
         self.status.setText('Trabalhando nos documentos. Aguarde um instante…')
+        self.job_message = ''
         self.worker = Worker(function)
         self.worker.done.connect(callback)
         self.last_error = ''
@@ -255,6 +265,8 @@ class Window(QMainWindow):
             self.status.setText('Erro · ' + self.last_error)
         else:
             self.update_summary()
+            if self.job_message:
+                self.status.setText(self.job_message)
 
     def process(self):
         paths = [self.document_path(i) for i in range(self.documents.count())]
@@ -282,7 +294,9 @@ class Window(QMainWindow):
                 self.set_document_status(entry, statuses.get(self.document_path(index), 'Pendente'))
             for item in self.items: self.apply_defaults(item)
             self.refresh()
+            self.job_message = f'Processamento concluído · {len(self.items)} item(ns) identificado(s) em {len(paths)} PDF(s).'
             if warnings: QMessageBox.warning(self, 'Revisão necessária', '\n'.join(warnings))
+            else: QMessageBox.information(self, 'Processamento concluído', self.job_message + '\nSelecione um item para revisar e aprovar.')
         self.run_job(task, done)
 
     def apply_defaults(self, item):
@@ -324,17 +338,46 @@ class Window(QMainWindow):
     def update_actions(self):
         row = self.table.currentRow()
         selected = 0 <= row < len(self.items)
-        ready = selected and item_status(self.items[row])[0] == 'Pronto para gerar'
-        configured = bool(self.settings.template and Path(self.settings.template).is_file() and self.settings.authorized_template_sha256)
+        reasons = []
+        if not selected:
+            reasons.append('Selecione um material para gerar.')
+        else:
+            item = self.items[row]
+            reasons.extend('Pendente: ' + field + '.' for field in item.pending_fields())
+            if not item.approved: reasons.append('Abra Editar e revisar item e marque a aprovação humana.')
+        if not self.settings.template:
+            reasons.append('Modelo não configurado: selecione o Excel oficial nas Configurações.')
+        elif not Path(self.settings.template).is_file():
+            reasons.append('Modelo não encontrado: confira o caminho nas Configurações.')
+        elif not self.settings.authorized_template_sha256:
+            reasons.append('Modelo não autorizado: inspecione e confira o relatório nas Configurações.')
+        elif selected and not reasons:
+            try:
+                stat = Path(self.settings.template).stat()
+                key = (self.settings.template, stat.st_mtime_ns, stat.st_size, self.settings.sheet,
+                       self.settings.authorized_template_sha256, item.model_dump_json())
+                if getattr(self, '_preflight_key', None) != key:
+                    self._preflight_error = ''
+                    try:
+                        check_template(self.settings.template, item, self.settings.sheet, self.settings.authorized_template_sha256)
+                    except Exception as exc:
+                        self._preflight_error = str(exc)
+                    self._preflight_key = key
+                if self._preflight_error: reasons.append('Modelo incompatível ou alterado: ' + self._preflight_error)
+            except OSError as exc:
+                reasons.append('Falha de acesso ao modelo: ' + str(exc))
+        ready = not reasons
         pdf = selected and row in self.outputs and (self.outputs[row] / 'cadastro.pdf').is_file()
         self.edit_button.setEnabled(selected); self.research_button.setEnabled(selected)
-        self.excel_button.setEnabled(ready and configured); self.pdf_button.setEnabled(ready and configured)
-        for widget in (self.excel_button, self.pdf_button):
-            widget.setToolTip('Revise e aprove o item e configure um modelo autorizado para gerar.' if not (ready and configured) else 'Gerar documentos do item selecionado')
+        self.excel_button.setEnabled(ready); self.pdf_button.setEnabled(ready and sys.platform == 'win32')
+        reason = '\n'.join(reasons) if reasons else 'Item aprovado e modelo conferido. Pronto para gerar Excel.'
+        pdf_reason = '' if sys.platform == 'win32' else 'PDF requer Windows e Microsoft Excel desktop instalado.'
+        self.excel_button.setToolTip(reason); self.pdf_button.setToolTip('\n'.join(filter(None, (reason, pdf_reason))))
+        self.generation_hint.setText('\n'.join(filter(None, (reason, pdf_reason))))
         self.preview_button.setEnabled(bool(pdf)); self.print_button.setEnabled(bool(pdf))
         self.process_button.setEnabled(self.documents.count() > 0)
-        self.remove_button.setEnabled(self.documents.currentRow() >= 0)
-        self.source_button.setEnabled(self.documents.currentRow() >= 0)
+        self.remove_button.setEnabled(bool(self.documents.selectedItems()))
+        self.source_button.setEnabled(bool(self.documents.selectedItems()))
 
     def update_details(self):
         row = self.table.currentRow()
@@ -342,16 +385,17 @@ class Window(QMainWindow):
             item = self.items[row]; status, tone = item_status(item)
             self.detail_badge.setText(status); self.detail_badge.setProperty('tone', tone)
             lines = [item.name, '', 'DESCRIÇÃO TÉCNICA', item.description or 'Pendente', '',
-                     f'Quantidade: {item.quantity if item.quantity is not None else "Pendente"}',
                      f'Preço unitário: {money_br(item.unit_price)}', f'NCM fiscal: {item.ncm or "Pendente"}',
                      f'Fabricante: {item.manufacturer or "Pendente"}', '', 'ORIGEM E EVIDÊNCIAS']
             for field, evidence in item.evidence.items():
+                if field == 'quantity': continue
                 lines.extend([f'{LABELS.get(field, field)} · {evidence.origin}', evidence.source, evidence.excerpt])
                 if evidence.estimated: lines.append('Estimativa — requer aprovação humana')
             lines.extend(item.warnings)
             lines.extend(['', 'OBSERVAÇÕES', 'Tipo e assinaturas permanecem vazios.'])
             if not item.ncm: lines.append('NCM fiscal: não aplicável confirmado.' if item.ncm_not_applicable else 'NCM fiscal pendente: confira a aplicabilidade antes de gerar.')
             if not item.approved: lines.append('Revise as informações e aprove no editor.')
+            if item.pending_fields(): lines.extend(['', 'CAMPOS PENDENTES', *item.pending_fields()])
             self.details.setPlainText('\n'.join(lines))
         else:
             self.detail_badge.setText('Selecione um item'); self.detail_badge.setProperty('tone', 'neutral'); self.details.clear()
@@ -364,15 +408,15 @@ class Window(QMainWindow):
         self.table.setRowCount(len(self.items))
         for row, item in enumerate(self.items):
             status, tone = item_status(item)
-            values = [item.name, str(item.quantity or ''), money_br(item.unit_price), item.ncm or 'Pendente', item.manufacturer or '—',
+            values = [item.name, money_br(item.unit_price), item.ncm or 'Pendente', item.manufacturer or '—',
                       '; '.join(sorted({e.source for e in item.evidence.values() if e.source})), status]
             for col, value in enumerate(values):
                 cell = QTableWidgetItem(value); cell.setToolTip(value)
-                if col == 6:
+                if col == 5:
                     cell.setForeground(QColor({'success': '#88e2bb', 'warning': '#f2cb83', 'neutral': '#a7ccff'}[tone]))
-                if col in (1, 2): cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if col == 1: cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.table.setItem(row, col, cell)
-        for col, width in enumerate((220, 100, 125, 105, 125, 160, 170)):
+        for col, width in enumerate((290, 130, 115, 125, 160, 170)):
             self.table.setColumnWidth(col, width)
         if self.items: self.table.selectRow(min(max(selected, 0), len(self.items) - 1))
         self.table.blockSignals(False)
@@ -504,18 +548,24 @@ class Window(QMainWindow):
             settings = self.settings.model_copy(deep=True)
             def task():
                 folder = new_output(settings.output, item.name)
-                xlsx = write_excel(settings.template, folder / 'cadastro.xlsx', item, settings.sheet, settings.authorized_template_sha256)
+                try:
+                    xlsx = write_excel(settings.template, folder / 'cadastro.xlsx', item, settings.sheet, settings.authorized_template_sha256)
+                except Exception as exc:
+                    raise RuntimeError(f'Excel não gerado. Confira modelo, acesso ao Microsoft Excel e permissões de gravação: {exc}') from exc
+                if not Path(xlsx).is_file(): raise RuntimeError('O arquivo Excel não foi criado.')
                 (folder / 'registro.json').write_text(item.model_dump_json(indent=2), encoding='utf-8')
                 if pdf:
                     try:
                         export_pdf(xlsx, folder / 'cadastro.pdf', settings.sheet, item.name, settings.expected_pages)
+                        if not (folder / 'cadastro.pdf').is_file(): raise RuntimeError('O arquivo PDF não foi criado.')
                     except Exception as exc:
                         raise RuntimeError(f'O Excel e o registro foram salvos em {folder}. O PDF não foi gerado: {exc}') from exc
                 return folder
             def done(folder):
                 self.outputs[row] = folder
                 self.update_actions()
-                QMessageBox.information(self, 'Arquivos gerados', f'{folder}\nConfira visualmente o PDF antes de imprimir: texto, Tipo e assinaturas.')
+                self.job_message = f'Geração concluída · {folder}'
+                QMessageBox.information(self, 'Arquivos gerados', f'{folder}\n' + ('Confira visualmente o PDF antes de imprimir: texto, Tipo e assinaturas.' if pdf else 'Excel e registro JSON salvos.'))
             self.run_job(task, done)
         except Exception as exc: QMessageBox.warning(self, 'Geração', str(exc))
 

@@ -34,7 +34,7 @@ def button(text, handler, primary=False):
 
 
 def item_status(item):
-    if not item.name.strip() or not item.requester.strip() or item.unit_price is None or (not item.ncm and not item.ncm_not_applicable):
+    if item.pending_fields():
         return 'Incompleto', 'warning'
     if item.approved:
         return 'Pronto para gerar', 'success'

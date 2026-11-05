@@ -46,17 +46,23 @@ class Item(BaseModel):
             return ''
         if not re.fullmatch(r'(?:\d{8}|\d{4}\.\d{2}\.\d{2})', value):
             raise ValueError('NCM deve conter oito dígitos ou o formato 0000.00.00')
-        return value.replace('.', '')
+        digits = value.replace('.', '')
+        return f'{digits[:4]}.{digits[4:6]}.{digits[6:]}'
+
+    def pending_fields(self):
+        missing = []
+        if not self.name.strip(): missing.append('Nome do material')
+        if not self.requester.strip(): missing.append('Requisitante')
+        if self.unit_price is None: missing.append('Preço unitário confirmado')
+        if not self.ncm and not self.ncm_not_applicable:
+            missing.append('NCM fiscal (informe o código ou confirme que não se aplica no editor)')
+        return missing
 
     def require_ready(self):
         if not self.approved:
             raise ValueError('Revise e aprove o item antes de gerar.')
-        if not self.name.strip() or not self.requester.strip():
-            raise ValueError('Nome e requisitante são obrigatórios.')
-        if not self.ncm and not self.ncm_not_applicable:
-            raise ValueError('NCM fiscal pendente. Informe o código ou confirme que não se aplica no editor.')
-        if self.unit_price is None:
-            raise ValueError('Preço unitário pendente. Informe um valor confirmado.')
+        if missing := self.pending_fields():
+            raise ValueError('Campos pendentes: ' + '; '.join(missing) + '.')
 
 
 def decimal_br(text):
