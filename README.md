@@ -469,8 +469,50 @@ A cotação real da Indata disponível foi reprocessada: Gaxeta 16, NCM 4016.93.
 unitário 239,00, quantidade interna 9 e total 2.151,00. A cópia Excel OOXML reabriu
 com E8 correta e todas as células/estilos fora do mapeamento preservados.
 
-**O PDF real de cinco páginas da Pharmainox não estava disponível nesta etapa.**
-Sua estrutura foi reproduzida com documentos sintéticos. **COM, Windows 11/Python
+Na entrega inicial desta correção, o PDF real de cinco páginas da Pharmainox
+ainda não estava disponível; foram usados documentos sintéticos. A validação
+posterior com o anexo real está descrita abaixo. **COM, Windows 11/Python
 3.14 e exportação real pelo Excel não foram executados aqui.** Execute o diagnóstico
 local e o fluxo real no Windows antes da aceitação final. Não se declara resolvida
 a falha específica do computador nem homologada a impressão somente com simulações.
+
+
+## Validação posterior com o PDF real da Pharmainox
+
+Após o envio do PDF original de cinco páginas, a falha de preço foi reproduzida:
+o detector de linhas criou colunas vazias adicionais, com os valores deslocados
+em relação aos índices dos cabeçalhos. Os cabeçalhos também estão centralizados
+verticalmente em alturas diferentes. A extração anterior encontrava o item e o
+NCM, mas deixava o unitário e o total pendentes.
+
+O fallback posicional agora inclui as linhas acima e abaixo do cabeçalho principal,
+combina fragmentos de coluna por sobreposição horizontal e associa as palavras
+dos dados pelos centros das colunas. Isso evita depender da borda esquerda de
+um título centralizado ou de células artificiais do detector de linhas. Uma
+extração com cabeçalho consistente e valores associados corretamente prevalece
+sobre a grade fragmentada, sem gerar itens duplicados. Legendas numeradas de
+imagens são excluídas da descrição técnica; os dados efetivos do escopo e suas
+evidências são mantidos. Não foram adicionadas respostas fixas por fornecedor.
+
+**127 testes passaram, nenhum falhou.** Novas regressões sintéticas reproduzem
+cabeçalhos em alturas diferentes, texto centralizado, grade com colunas vazias
+extras e legenda de imagem dentro do escopo. O PDF corporativo não integra os
+testes publicados nem o repositório.
+
+No PDF real, o fluxo de importação pela interface identificou apenas um item:
+**MANIPULO COM TRAVA**, NCM **7326.90.90**, unitário **R$ 1.422,00**, quantidade
+interna **8** e total **R$ 11.376,00**. A descrição foi associada ao escopo da página
+3 pela referência explícita do item, sem incluir prazo de entrega, exclusões ou
+legenda da imagem. A revisão e aprovação de teste pelo editor permitiram gerar
+uma cópia Excel pelo botão da interface no backend OOXML do Linux. A cotação
+real da Indata também foi revalidada: Gaxeta 16, NCM 4016.93.00 e unitário 239,00.
+
+As cópias foram reabertas para conferir valores, E8 em data verdadeira e formato
+brasileiro, Tipo/SAP/equipamento vazios, sete validações, proteção e todas as
+células/estilos fora do mapeamento. Os dois PDFs e o modelo originais permaneceram
+intactos. Aprovações e saídas foram apenas ensaios locais, sem homologação nem
+configuração de autorização corporativa persistente.
+
+**A gravação COM e o PDF final pelo Microsoft Excel continuam pendentes de teste
+real no Windows.** A validação dos PDFs de entrada e da cópia OOXML não comprova
+impressão, paginação ou legibilidade do formulário exportado pelo Excel.

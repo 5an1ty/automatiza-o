@@ -15,6 +15,7 @@ from cadastro_pcm.core.item_extractor import extract_items
 from cadastro_pcm.core.pdf_reader import Page, read_pdf
 from cadastro_pcm.core.table_headers import field_for, find_header
 from cadastro_pcm.core.template_reader import read_template
+from cadastro_pcm.core.word_tables import word_tables
 from cadastro_pcm.interface import main_window
 from test_prompt04 import extended_template, gui, wait_job
 
@@ -190,6 +191,51 @@ def test_five_page_proposal_gui_approval_to_excel(gui, tmp_path):
     assert ws['C16'].value is None
     assert fingerprint(window.settings.template) == before
     wb.close(); editor.deleteLater()
+
+
+@pytest.mark.parametrize('extra_grid_columns', [False, True])
+def test_centered_staggered_headers_and_shifted_grid_cells(tmp_path, monkeypatch, extra_grid_columns):
+    path = tmp_path / 'centered.pdf'
+    centers = [47.5, 97.5, 215, 320, 355, 385, 417.5, 482.5, 577.5]
+    with pymupdf.open() as doc:
+        page = doc.new_page(width=660, height=420)
+        def centered(x, y, text):
+            width = pymupdf.get_text_length(text, fontsize=8)
+            page.insert_text((x - width / 2, y), text, fontsize=8)
+        for col, text in enumerate(['Item', 'NCM', 'Descrição', 'Qtde', 'IPI', 'ISS', 'ICMS', 'Valor Unitário C/', 'Valor Total C/']):
+            centered(centers[col], 126 if col < 4 else 120, text)
+        for col in range(4, 9): centered(centers[col], 132, '%' if col < 7 else 'Impostos')
+        values = ['2.1', '7318.15.00', 'ANEL DE VEDACAO', '3,0', '5', '-', '12', '18,50', '55,50']
+        for x, text in zip(centers, values): centered(x, 164, text)
+        page.insert_text((35, 210), 'Prazo de entrega: 12 dias uteis')
+        doc.save(path)
+    if extra_grid_columns:
+        # Reproduce a detector that fragments logical cells: values are shifted
+        # relative to header indexes. The real word geometry must win.
+        broken = [
+            ['Item', 'NCM', 'Descrição', 'Qtde', 'IPI', 'ISS', 'ICMS', 'Valor Unitário C/ Impostos', None, 'Valor Total C/ Impostos', None],
+            ['2.1', '7318.15.00', 'ANEL DE VEDACAO', '3,0', '5', '-', '12', None, '18,50', None, '55,50'],
+        ]
+        def finder(page, **options):
+            return SimpleNamespace(tables=[] if options else [SimpleNamespace(bbox=(30, 105, 625, 180), extract=lambda: broken)])
+        monkeypatch.setattr(pymupdf.Page, 'find_tables', finder)
+    with pymupdf.open(path) as doc:
+        positioned = word_tables(doc[0])
+        assert len(positioned) == 1
+        direct = extract_items([Page('synthetic', 1, '', [positioned[0][1]])])
+        assert direct[0].name == 'ANEL DE VEDACAO' and direct[0].unit_price == 18.5
+    items = extract_items(read_pdf(path))
+    assert len(items) == 1 and items[0].name == 'ANEL DE VEDACAO'
+    assert items[0].ncm == '7318.15.00' and items[0].quantity == 3
+    assert items[0].unit_price == 18.5 and items[0].total_price == 55.5
+
+
+def test_image_captions_and_nested_bullets_are_not_technical_fields():
+    text = ('2. ESCOPO DE FORNECIMENTO\n2.1 Conjunto sintético\n'
+            'o Bucha de bronze\nIMAGEM 01: Vista ilustrativa\n'
+            '3. EXCLUSÕES\nServiço não incluído')
+    item = extract_items([Page('synthetic', 1, text, [table()])])[0]
+    assert item.description == 'Conjunto sintético\nBucha de bronze'
 
 
 def test_windows_diagnostic_is_explicit_and_does_not_claim_excel_on_linux(tmp_path, monkeypatch):

@@ -20,6 +20,8 @@ def match_scope(items, pages):
                 flush(); active = True; reference, lines = '', []
                 continue
             if not active: continue
+            if re.match(r'^(?:imagem|figura|foto|ilustracao)\s*\d+\s*[:.-]', normalize(line)):
+                continue
             if commercial_line(title) or re.match(r'^\d+[.)]\s+[^\d]', line):
                 flush(); active = False; reference, lines = '', []
                 continue
@@ -27,7 +29,7 @@ def match_scope(items, pages):
             if match:
                 flush(); reference, lines = match[1], [match[2]]
             elif reference and line:
-                lines.append(re.sub(r'^[-•]\s*', '', line))
+                lines.append(re.sub(r'^(?:[-•]\s*|o\s+(?=[A-ZÁ-Ú]))', '', line))
         flush()
     keys = [(item.evidence['item_ref'].source, item.evidence['item_ref'].excerpt)
             for item in items if 'item_ref' in item.evidence]
