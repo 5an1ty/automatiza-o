@@ -10,7 +10,7 @@ import pymupdf
 import pytest
 from openpyxl import Workbook
 from openpyxl.styles import Protection
-from openpyxl.utils.datetime import CALENDAR_MAC_1904
+from openpyxl.utils.datetime import CALENDAR_MAC_1904, to_excel
 from PySide6.QtWidgets import QComboBox, QDialog
 
 from cadastro_pcm.core import excel_writer, pdf_exporter
@@ -149,12 +149,24 @@ def test_native_writer_sets_date_format_and_reopens(extended_template, tmp_path,
             @property
             def Value(self): return self.cell.value
             @Value.setter
-            def Value(self, value): self.cell.value = value
+            def Value(self, value):
+                assert self.address != 'E8', 'Date must use Value2'
+                self.cell.value = value
+            @property
+            def Value2(self):
+                value = self.cell.value
+                return to_excel(value, wb.epoch) if isinstance(value, (date, datetime)) else value
+            @Value2.setter
+            def Value2(self, value): self.cell.value = value
+            @property
+            def NumberFormatLocal(self): return 'dd/mm/aaaa'
+            @property
+            def Text(self): return self.cell.value.strftime('%d/%m/%Y')
             @property
             def NumberFormat(self): return self.cell.number_format
             @NumberFormat.setter
             def NumberFormat(self, value):
-                formats.append((self.address, value)); self.cell.number_format = value
+                formats.append((self.address, value)); self.cell.number_format = value + ';@'
         ws = SimpleNamespace(ProtectContents=False, Range=Cell,
                              Cells=SimpleNamespace(SpecialCells=lambda kind: object()),
                              Application=SimpleNamespace(Intersect=lambda a, b: None))

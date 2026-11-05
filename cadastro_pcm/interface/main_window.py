@@ -392,7 +392,7 @@ class Window(QMainWindow):
                      f'Preço unitário: {money_br(item.unit_price)}', f'NCM fiscal: {item.ncm or "Pendente"}',
                      '', 'ORIGEM E EVIDÊNCIAS']
             for field, evidence in item.evidence.items():
-                if field in ('quantity', 'total_price', 'manufacturer', 'manufacturer_code'): continue
+                if field in ('quantity', 'total_price', 'manufacturer', 'manufacturer_code', 'item_ref'): continue
                 lines.extend([f'{LABELS.get(field, field)} · {evidence.origin}', evidence.source, evidence.excerpt])
                 if evidence.estimated: lines.append('Estimativa — requer aprovação humana')
             lines.extend(item.warnings)

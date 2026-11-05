@@ -2,9 +2,9 @@
 from copy import deepcopy
 import re
 from xml.etree import ElementTree as ET
+from .excel_date import DATE_FORMAT
 
 NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
-DATE_FORMAT = 'dd/mm/yyyy'
 
 
 def append_element(xml, tag, element, count):

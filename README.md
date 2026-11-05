@@ -384,3 +384,93 @@ formulário inteiro, assinaturas vazias, logotipo e controle de alterações. Se
 falhar, use a nova exportação do Excel salvo e registre a causa exibida. Não se
 remove proteção para tentar forçar uma exportação. Python 3.14/Windows permanece
 pendente de execução nesta etapa.
+
+## Datas COM e propostas com tabelas comerciais multilinha
+
+A comparação literal do formato de E8 foi substituída por três verificações
+separadas. No Windows, a data é escrita como serial numérico usando **Value2** e
+`NumberFormat = "dd/mm/yyyy"`. Após salvar e fechar, o Excel reabre a cópia somente
+para leitura: o valor é convertido pelo sistema de datas 1900/1904, o formato é
+conferido semanticamente e a exibição é examinada à parte. Também se mantém a
+verificação independente do arquivo salvo pelo leitor OOXML.
+
+Formatos equivalentes como `dd/mm/yyyy;@`, prefixos de localidade e separadores
+entre aspas/escapados são aceitos. O formato local `dd/mm/aaaa` é reconhecido.
+Datas erradas, datas armazenadas como texto, formato americano, ano com dois
+dígitos e formato General continuam bloqueados. `Value2` numérico não é um erro:
+é a representação interna normal da data. `####` em Text indica largura
+insuficiente, não uma data diferente; o PDF continua exigindo a data brasileira
+visível, sem aceitar `####` ou o serial em seu lugar.
+
+A validação anterior era excessivamente literal e não havia inspeção COM após
+reabrir. Essas fragilidades foram corrigidas; a causa exata observada na máquina
+do usuário ainda precisa ser confirmada pelo diagnóstico abaixo, pois este
+ambiente Linux não possui Microsoft Excel real.
+
+### Diagnóstico local de E8 no Windows
+
+Na pasta do projeto atualizado, substitua o caminho pelo modelo oficial local:
+
+```powershell
+.\.venv\Scripts\python.exe -m cadastro_pcm.core.date_diagnostics --template "C:\Documentos\tela de cadastro.xlsx" --output-dir "$env:LOCALAPPDATA\CadastroPCM\diagnostico-data"
+```
+
+Sem `--date`, utiliza a data atual do computador. Para verificar uma data fixa,
+repita acrescentando `--date 2026-11-05`. Para conferir também sua apresentação no
+PDF, acrescente `--export-pdf`. A saída informa PASSOU/FALHOU e o caminho do JSON;
+o processo retorna código 0 apenas quando o teste passa e o original está intacto.
+
+O teste cria uma cópia exclusiva, altera somente E8, salva e reabre via Excel.
+Preserva a proteção e recusa E8 bloqueada ou com fórmula. O relatório registra
+somente a data esperada, Value2, sistema de datas, NumberFormat, NumberFormatLocal,
+Text e resultados separados (`date_ok`, `format_ok`, `display`). A cópia permanece
+para inspeção inclusive em falha; nenhum conteúdo de outras células é incluído
+no relatório. Os arquivos são locais: não publique o modelo, a cópia nem os PDFs.
+O teste não preenche nem aprova um cadastro e não altera a emissão institucional.
+
+### Interpretação de tabelas
+
+Cabeçalhos são combinados por coluna em até quatro linhas, reconhecendo, entre
+outros, **Valor Unitário C/ Impostos** e **Valor Total C/ Impostos**. Não se exige
+`R$` nas células: `1.422,00`, `R$ 1.422,00` e `1422,00` representam o mesmo valor
+quando associados à coluna unitária. IPI/ICMS não são colunas monetárias e
+percentuais não podem preencher o preço. Quantidade × unitário serve somente
+como conferência auxiliar; o total nunca substitui a identificação do unitário.
+
+A leitura compara tabelas com linhas e tabelas alinhadas por palavras. Quando o
+detector genérico mistura texto de escopo com a tabela, há um fallback baseado
+nas coordenadas das palavras: delimita o cabeçalho, alinha suas continuações e
+associa dados às mesmas colunas. Detecções sobrepostas são selecionadas pela
+clareza dos cabeçalhos/dados, sem duplicar itens. Uma caixa decorativa não impede
+a leitura de outra tabela sem bordas na mesma página. Ambiguidade permanece
+pendente, sem escolher arbitrariamente o maior valor encontrado.
+
+Uma seção **Condições comerciais** pode conter uma tabela legítima de produtos:
+o parser aceita sua estrutura e rejeita as linhas de prazo, pagamento, frete,
+dados bancários ou totalização. Esses textos não se tornam produtos. Escopo
+fornecido em seção própria só enriquece a descrição comercial quando há uma
+referência explícita de item, única em ambos os lados e no mesmo PDF. A evidência
+registra sua página. Referências repetidas ou ausentes não provocam associação
+por suposição; descrições técnicas existentes não são substituídas silenciosamente.
+A interface de quatro campos principais e o texto `NCM:` no formulário permanecem.
+
+### Resultados desta etapa
+
+**124 testes passaram; nenhum falhou** em Python 3.12/Linux. Incluem os casos
+anteriores, formatos equivalentes de data, serial nos sistemas 1900/1904, data
+errada com aparência correta, largura insuficiente, persistência/reabertura COM
+simulada e diagnóstico que preserva original e cópia em falha. Há propostas
+sintéticas de cinco páginas com tabelas com/sem bordas, cabeçalhos multilinha,
+impostos e múltiplos produtos. O fluxo do worker, revisão/aprovação e botão Gerar
+Excel foi exercitado com MANIPULO COM TRAVA, NCM 7326.90.90 e unitário 1.422,00.
+Os valores são dados dos testes; não há respostas fixas no parser.
+
+A cotação real da Indata disponível foi reprocessada: Gaxeta 16, NCM 4016.93.00,
+unitário 239,00, quantidade interna 9 e total 2.151,00. A cópia Excel OOXML reabriu
+com E8 correta e todas as células/estilos fora do mapeamento preservados.
+
+**O PDF real de cinco páginas da Pharmainox não estava disponível nesta etapa.**
+Sua estrutura foi reproduzida com documentos sintéticos. **COM, Windows 11/Python
+3.14 e exportação real pelo Excel não foram executados aqui.** Execute o diagnóstico
+local e o fluxo real no Windows antes da aceitação final. Não se declara resolvida
+a falha específica do computador nem homologada a impressão somente com simulações.

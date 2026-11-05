@@ -4,21 +4,8 @@ Textos não reconhecidos permanecem disponíveis para revisão manual.
 import re
 from .models import Item, Evidence, decimal_br
 from .product_text import normalize, commercial_line, clean_description
-
-
-ALIASES = {
-    'name': ['descricao', 'produto', 'material', 'servico', 'descricao do produto'],
-    'quantity': ['quantidade', 'qtd', 'qtde', 'qt', 'qt.'],
-    'unit_price': ['preco unitario', 'valor unitario', 'vl. unitario', 'vl unit', 'unitario', 'vl. unit.', 'vl unit.', 'preco unit.', 'valor unit.', 'preco unitario (r$)', 'valor unitario (r$)', 'r$ unit', 'r$ unit.', 'r$ unitario'],
-    'total_price': ['preco total', 'valor total', 'total', 'r$ total'],
-    'ncm': ['ncm'],
-    'description': ['descricao tecnica'],
-}
-
-
-def field_for(label):
-    label = normalize(label).rstrip(': .')
-    return next((key for key, names in ALIASES.items() if label in [name.rstrip(': .') for name in names]), None)
+from .table_headers import field_for, find_header
+from .scope_matcher import match_scope
 
 
 def separate_ncm(text):
@@ -40,6 +27,7 @@ def separate_ncm(text):
 def make_item(values, page, excerpt):
     clean, warnings = {}, []
     values = dict(values)
+    reference = str(values.pop('item_ref', '') or '').strip().rstrip('.')
     name = str(values.get('name') or '').strip()
     if not name or commercial_line(name.splitlines()[0]):
         return None
@@ -87,6 +75,8 @@ def make_item(values, page, excerpt):
         if abs(item.quantity * item.unit_price - item.total_price) > decimal_br('0,01'):
             item.warnings.append('Quantidade × unitário difere do total; confira impostos e descontos. Valores extraídos foram preservados.')
     item.evidence = {key: Evidence(origin='pdf', source=f'{page.source} — página {page.number}', excerpt=excerpt) for key in clean}
+    if reference and re.fullmatch(r'\d+(?:\.\d+)*', reference):
+        item.evidence['item_ref'] = Evidence(origin='pdf', source=page.source, excerpt=reference)
     return item
 
 
@@ -94,24 +84,26 @@ class TableStrategy:
     def extract(self, page):
         result = []
         for table in page.tables:
-            header_index = None
-            for index, row in enumerate(table[:5]):
-                candidates = [field_for(str(cell or '')) for cell in row]
-                recognized = [key for key in candidates if key]
-                if ('name' in candidates and len(recognized) >= 2
-                        and len(recognized) == len(set(recognized))):
-                    headers, header_index = candidates, index
-                    break
-            if header_index is None:
-                continue
+            found = find_header(table)
+            if found is None: continue
+            header_start, header_index, headers = found
+            heading = str(table[header_start:header_index + 1])
             pending = None
             excerpt = []
             for row in table[header_index + 1:]:
+                # Repeated column headings are not product rows.
+                repeated = [field_for(str(cell or '')) for cell in row]
+                if 'name' in repeated and sum(key is not None for key in repeated) >= 2:
+                    if pending:
+                        item = make_item(pending, page, heading + str(excerpt))
+                        if item: result.append(item)
+                    pending, excerpt = None, []
+                    continue
                 values = {key: row[i] for i, key in enumerate(headers) if key and i < len(row)}
                 name = str(values.get('name') or '').strip()
                 if commercial_line(name) or normalize(name) in ('total', 'subtotal'):
                     if pending:
-                        item = make_item(pending, page, str(excerpt))
+                        item = make_item(pending, page, heading + str(excerpt))
                         if item: result.append(item)
                         pending = None
                     # Commercial sections terminate item association, including
@@ -124,12 +116,12 @@ class TableStrategy:
                     excerpt.append(row)
                     continue
                 if pending:
-                    item = make_item(pending, page, str(excerpt))
+                    item = make_item(pending, page, heading + str(excerpt))
                     if item: result.append(item)
                 pending = values if name else None
                 excerpt = [row]
             if pending:
-                item = make_item(pending, page, str(excerpt))
+                item = make_item(pending, page, heading + str(excerpt))
                 if item: result.append(item)
         return result
 
@@ -188,6 +180,7 @@ STRATEGIES = [TableStrategy(), LabelStrategy()]
 
 
 def extract_items(pages):
+    pages = list(pages)
     result = []
     for page in pages:
         for strategy in STRATEGIES:
@@ -195,6 +188,7 @@ def extract_items(pages):
             if items:
                 result.extend(items)
                 break
+    match_scope(result, pages)
     # Flag, never delete or merge, matching product identities across documents/pages.
     seen = {}
     for item in result:
