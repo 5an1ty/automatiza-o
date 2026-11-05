@@ -167,3 +167,55 @@ def test_gui_review(monkeypatch):
     assert editor.result_item.name == 'Nome corrigido'
     assert editor.result_item.evidence['name'].origin == 'manual'
     editor.deleteLater(); window.deleteLater(); app.processEvents()
+
+
+def test_interface_selection_and_actions(monkeypatch, tmp_path):
+    monkeypatch.setenv('QT_QPA_PLATFORM', 'offscreen')
+    from PySide6.QtWidgets import QApplication
+    from cadastro_pcm.core.settings import Settings
+    from cadastro_pcm.interface import main_window
+    app = QApplication.instance() or QApplication([])
+    model = tmp_path / 'modelo.xlsx'; model.touch()
+    monkeypatch.setattr(main_window, 'load_settings', lambda: Settings(requester='Revisor', template=str(model), authorized_template_sha256='teste'))
+    window = main_window.Window()
+    assert not window.edit_button.isEnabled()
+    assert not window.process_button.isEnabled()
+    pdf = tmp_path / 'cotação.pdf'; pdf.write_bytes(b'%PDF')
+    window.add_paths([str(pdf), str(pdf)])
+    assert window.documents.count() == 1
+    assert window.document_path(0) == str(pdf)
+    assert 'cotação.pdf' in window.documents.item(0).text()
+    assert window.process_button.isEnabled()
+    item = approved(); window.items = [item]; window.refresh()
+    assert window.excel_button.isEnabled()
+    assert 'Gaxeta 16' in window.details.toPlainText()
+    assert window.detail_badge.text() == 'Pronto para gerar'
+    assert not window.preview_button.isEnabled()
+    folder = tmp_path / 'saida'; folder.mkdir(); (folder / 'cadastro.pdf').touch()
+    window.outputs[0] = folder; window.update_actions()
+    assert window.preview_button.isEnabled()
+    item.unit_price = None; window.refresh()
+    assert not window.pdf_button.isEnabled()
+    assert window.detail_badge.text() == 'Incompleto'
+    window.documents.setCurrentRow(0); window.remove_file()
+    assert not window.process_button.isEnabled()
+    window.deleteLater(); app.processEvents()
+
+
+def test_settings_dialog_structure(monkeypatch):
+    monkeypatch.setenv('QT_QPA_PLATFORM', 'offscreen')
+    from PySide6.QtWidgets import QApplication, QDialog, QTabWidget, QComboBox
+    from cadastro_pcm.core.settings import Settings
+    from cadastro_pcm.interface import main_window
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main_window, 'load_settings', lambda: Settings(requester='Revisor'))
+    window = main_window.Window()
+    captured = []
+    def inspect_dialog(dialog):
+        captured.append(dialog.findChild(QTabWidget).count())
+        assert dialog.findChild(QComboBox).currentText() == 'atual'
+        return 0
+    monkeypatch.setattr(QDialog, 'exec', inspect_dialog)
+    window.configure()
+    assert captured == [3]
+    window.deleteLater(); app.processEvents()
