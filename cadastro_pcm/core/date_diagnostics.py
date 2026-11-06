@@ -58,7 +58,9 @@ def diagnose_date(template, sheet, expected, output_dir, with_pdf=False):
     except Exception as exc:
         report['failed_phase'] = phase
         report['error'] = exc.reason if isinstance(exc, DateValidationError) else 'Operação local não concluída: ' + type(exc).__name__
-        if isinstance(exc, DateValidationError): report['technical_report'] = exc.report_path.name
+        if isinstance(exc, DateValidationError):
+            report['technical_report'] = exc.report_path.name if exc.report_path else None
+            report['e8_details'] = exc.diagnostic
     report['source_unchanged'] = fingerprint(template) == before
     report['copy'] = target.name
     report_path = target.with_suffix('.json')

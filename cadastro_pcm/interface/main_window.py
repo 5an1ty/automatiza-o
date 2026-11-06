@@ -9,7 +9,7 @@ from PySide6.QtGui import QDesktopServices, QColor
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QListWidget, QTableWidget, QTableWidgetItem, QMessageBox,
     QFileDialog, QDialog, QFormLayout, QLineEdit, QTextEdit, QCheckBox,
-    QDialogButtonBox, QLabel, QComboBox, QSplitter, QHeaderView, QProgressBar, QTabWidget, QListWidgetItem)
+    QDialogButtonBox, QLabel, QComboBox, QSplitter, QHeaderView, QProgressBar, QTabWidget, QListWidgetItem, QApplication)
 from .theme import QSS
 from .components import label, badge, card, button, item_status
 from cadastro_pcm.core.models import Item, Evidence, decimal_br, money_br
@@ -21,11 +21,13 @@ from cadastro_pcm.core.excel_writer import inspect_template, write_excel, check_
 from cadastro_pcm.core.pdf_exporter import export_pdf
 from cadastro_pcm.core.file_manager import new_output
 from cadastro_pcm.core.research import STATUS, apply_suggestion
+from cadastro_pcm.core.excel_date import date_error_payload
 
 
 class Worker(QThread):
     done = Signal(object)
     failed = Signal(str)
+    diagnostic = Signal(object)
 
     def __init__(self, function):
         super().__init__()
@@ -36,7 +38,19 @@ class Worker(QThread):
             self.done.emit(self.function())
         except Exception as exc:
             logging.exception('Falha na operação')
+            if payload := date_error_payload(exc): self.diagnostic.emit(payload)
             self.failed.emit(str(exc))
+
+
+class DiagnosticMessageBox(QMessageBox):
+    def done(self, result):
+        clicked = self.clickedButton()
+        if clicked is not None and self.buttonRole(clicked) == QMessageBox.ActionRole:
+            return  # Keep Save/Copy available after a canceled or failed save.
+        super().done(result)
+
+    def reject(self):
+        super().done(QMessageBox.Close)
 
 
 LABELS = {'name':'Nome', 'description':'Descrição técnica',
@@ -253,6 +267,8 @@ class Window(QMainWindow):
         self.worker = Worker(function)
         self.worker.done.connect(callback)
         self.last_error = ''
+        self.date_diagnostic = None
+        self.worker.diagnostic.connect(self.receive_date_diagnostic)
         self.worker.failed.connect(self.show_job_error)
         self.worker.finished.connect(self.job_finished)
         self.worker.start()
@@ -428,7 +444,43 @@ class Window(QMainWindow):
 
     def show_job_error(self, error):
         self.last_error = error
-        QMessageBox.warning(self, 'Não foi possível concluir', error)
+        self.error_dialog('Não foi possível concluir', error)
+
+    def receive_date_diagnostic(self, payload):
+        self.date_diagnostic = payload
+
+    def error_dialog(self, title, error):
+        payload = getattr(self, 'date_diagnostic', None)
+        if not payload:
+            QMessageBox.warning(self, title, error)
+            return
+        text = json.dumps(payload['content'], ensure_ascii=False, indent=2, allow_nan=False)
+        box = DiagnosticMessageBox(QMessageBox.Warning, title, error, QMessageBox.Close, self)
+        box.button(QMessageBox.Close).setText('Fechar')
+        box.setDefaultButton(QMessageBox.Close)
+        box.setDetailedText(text)
+        path = payload.get('path')
+        if not path or not Path(path).is_file():
+            box.setInformativeText('O relatório automático não foi localizado. Salve ou copie o diagnóstico pelos botões abaixo.')
+        else:
+            box.setInformativeText('Você também pode salvar outra cópia ou copiar o diagnóstico pelos botões abaixo.')
+        save = box.addButton('Salvar diagnóstico…', QMessageBox.ActionRole)
+        copy = box.addButton('Copiar diagnóstico', QMessageBox.ActionRole)
+        def save_report():
+            selected = QFileDialog.getSaveFileName(box, 'Salvar diagnóstico de E8', 'diagnostico_data.json', 'JSON (*.json)')[0]
+            if not selected: return
+            target = Path(selected)
+            if target.suffix.lower() != '.json': target = Path(str(target) + '.json')
+            try:
+                target.write_text(text, encoding='utf-8')
+                if json.loads(target.read_text(encoding='utf-8')) != payload['content']:
+                    raise OSError('Gravação não confirmada.')
+                QMessageBox.information(box, 'Diagnóstico salvo', f'Arquivo confirmado em:\n{target}')
+            except (OSError, ValueError):
+                QMessageBox.warning(box, 'Diagnóstico', 'Não foi possível salvar nesta pasta. Escolha outra ou use Copiar diagnóstico.')
+        save.clicked.connect(save_report)
+        copy.clicked.connect(lambda: QApplication.clipboard().setText(text))
+        box.exec()
 
     def selected(self):
         row = self.table.currentRow()
@@ -558,22 +610,24 @@ class Window(QMainWindow):
                     raise RuntimeError(f'Excel não gerado. Confira modelo, acesso ao Microsoft Excel e permissões de gravação: {exc}') from exc
                 if not Path(xlsx).is_file(): raise RuntimeError('O arquivo Excel não foi criado.')
                 (folder / 'registro.json').write_text(item.model_dump_json(indent=2), encoding='utf-8')
-                error = ''
+                error, diagnostic = '', None
                 if pdf:
                     try:
                         export_pdf(xlsx, folder / 'cadastro.pdf', settings.sheet, item.name, settings.expected_pages)
                         if not (folder / 'cadastro.pdf').is_file(): raise RuntimeError('O arquivo PDF não foi criado.')
                     except Exception as exc:
                         error = f'O Excel e o registro foram salvos em {folder}. O PDF não foi gerado: {exc}. Use Exportar PDF do Excel salvo para tentar novamente.'
-                return folder, error
+                        diagnostic = date_error_payload(exc)
+                return folder, error, diagnostic
             def done(result):
-                folder, error = result
+                folder, error, diagnostic = result
                 self.outputs[row] = folder
                 self.output_specs[row] = (settings.sheet, item.name, settings.expected_pages)
                 self.update_actions()
                 if error:
                     self.last_error = error
-                    QMessageBox.warning(self, 'PDF não gerado — Excel preservado', error)
+                    self.date_diagnostic = diagnostic
+                    self.error_dialog('PDF não gerado — Excel preservado', error)
                     return
                 self.job_message = f'Geração concluída · {folder}'
                 QMessageBox.information(self, 'Arquivos gerados', f'{folder}\n' + ('Confira visualmente o PDF antes de imprimir: texto, Tipo e assinaturas.' if pdf else 'Excel e registro JSON salvos.'))

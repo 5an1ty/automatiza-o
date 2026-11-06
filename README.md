@@ -569,3 +569,35 @@ Os casos de COM usam simulações explícitas, incluindo a configuração region
 **a gravação e a exportação pelo Excel real ainda dependem do Windows do usuário**.
 Use o diagnóstico local de E8 documentado acima, também com `--export-pdf`, para
 confirmar a apresentação na instalação real antes da aceitação final.
+
+## Recuperar o diagnóstico quando o JSON não aparece
+
+A mensagem de E8 não exige mais localizar manualmente o arquivo automático.
+Sua janela oferece **Salvar diagnóstico…**, **Copiar diagnóstico** e os detalhes
+em JSON. Os dados sanitizados de E8 são mantidos em memória durante a operação,
+inclusive quando o erro é encapsulado pelo worker ou ocorre na exportação PDF.
+Salvar/cancelar/copiar não fecha a janela; use **Fechar** ao terminar.
+
+A gravação automática agora é confirmada por releitura do JSON. Se a pasta padrão
+não permitir gravar, tenta uma pasta temporária e informa o caminho confirmado.
+Se nenhuma gravação for possível, a mensagem diz isso explicitamente, sem indicar
+um arquivo inexistente, e os botões continuam disponíveis com os dados em memória.
+Se um arquivo já confirmado desaparecer depois, o diagnóstico ainda pode ser
+copiado ou salvo em outra pasta. Ao iniciar outra operação, o diagnóstico anterior
+é descartado para não ser associado a um erro diferente.
+
+Atualize o projeto, execute novamente a geração e, se E8 falhar, escolha
+**Salvar diagnóstico…** para selecionar uma pasta ou **Copiar diagnóstico** para
+obter o JSON sem depender de arquivos. A confirmação de salvamento mostra o
+caminho do arquivo verificado. Os botões exportam somente o diagnóstico sanitizado
+de E8, sem nomes, caminhos de usuário ou conteúdo de outras células. Não publique
+os relatórios no GitHub.
+
+**158 testes passaram, nenhum falhou** em Linux. Incluem falha de permissão,
+arquivo removido antes/depois da confirmação, falha total de gravação, retenção
+em memória, erros encapsulados pelo worker, erro de PDF com Excel preservado,
+salvamento manual, cópia e continuidade da janela de erro. As validações de valor,
+formato e apresentação de E8 permanecem ativas. Isso corrige o acesso ao diagnóstico;
+não estabelece a causa específica da divergência que ocorre no Excel do usuário.
+A reprodução e validação dessa divergência ainda exigem as observações reais do
+Windows, obtidas pelo novo diálogo ou pelo diagnóstico local já documentado.

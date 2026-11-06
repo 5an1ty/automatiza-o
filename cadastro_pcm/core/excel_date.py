@@ -145,27 +145,53 @@ def require_com_date(report, require_display=False, exact=False):
         raise ValueError('E8: apresentação DD/MM/AAAA com barras ainda não confirmada para o PDF.')
 
 
+def date_report_content(attempts, phase):
+    return {'phase': phase, 'cell': 'E8', 'attempts': attempts,
+            'date_ok': attempts[-1]['date_ok'], 'format_ok': attempts[-1]['format_ok'],
+            'display_ok': attempts[-1]['display_ok']}
+
+
 def save_date_report(attempts, phase, report_dir=None):
     if report_dir is None:
         from .settings import settings_path
         report_dir = settings_path().parent / 'diagnostico-data'
-    content = {'phase': phase, 'cell': 'E8', 'attempts': attempts,
-               'date_ok': attempts[-1]['date_ok'], 'format_ok': attempts[-1]['format_ok'],
-               'display_ok': attempts[-1]['display_ok']}
+    content = date_report_content(attempts, phase)
     def write(folder):
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / f'diagnostico_data_{uuid4().hex}.json'
-        with path.open('x', encoding='utf-8') as output:
-            json.dump(content, output, ensure_ascii=False, indent=2, allow_nan=False)
+        try:
+            with path.open('x', encoding='utf-8') as output:
+                json.dump(content, output, ensure_ascii=False, indent=2, allow_nan=False)
+            if json.loads(path.read_text(encoding='utf-8')) != content:
+                raise OSError('Gravação do relatório não confirmada.')
+        except (OSError, ValueError):
+            try: path.unlink(missing_ok=True)
+            except OSError: pass
+            raise
         return path
     try: return write(Path(report_dir))
-    except OSError: return write(Path(tempfile.mkdtemp(prefix='pcm_data_')))
+    except (OSError, ValueError): return write(Path(tempfile.mkdtemp(prefix='pcm_data_')))
 
 
 class DateValidationError(ValueError):
-    def __init__(self, reason, path):
+    def __init__(self, reason, path, diagnostic=None):
         self.reason, self.report_path = reason, path
-        super().__init__(reason + f' Relatório técnico local: {path}')
+        self.diagnostic = diagnostic
+        location = (f' Relatório técnico local: {path}' if path else
+                    ' Não foi possível gravar o relatório automático. Use Salvar diagnóstico ou Copiar diagnóstico na janela de erro.')
+        super().__init__(reason + location)
+
+
+def date_error_payload(error):
+    """Keep sanitized E8 observations across worker exception wrappers."""
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        if isinstance(error, DateValidationError) and error.diagnostic is not None:
+            return {'content': error.diagnostic,
+                    'path': str(error.report_path) if error.report_path else None}
+        error = error.__cause__ or error.__context__
+    return None
 
 
 def check_com_date(cell, expected, epoch, *, phase, report_dir=None, repair=False, exact=False):
@@ -194,10 +220,13 @@ def check_com_date(cell, expected, epoch, *, phase, report_dir=None, repair=Fals
     # Persist before raising. Unexpected text/values are redacted, never copied
     # from corporate cells into diagnostic files. Reports contain only E8.
     needs_report = len(attempts) > 1 or any(not r['date_ok'] or not r['format_ok'] or r['display'] != 'ok' for r in attempts)
-    path = save_date_report(attempts, phase, report_dir) if needs_report else None
+    path = None
+    if needs_report:
+        try: path = save_date_report(attempts, phase, report_dir)
+        except (OSError, ValueError): pass  # The error dialog retains the report in memory.
     try: require_com_date(attempts[-1], require_display=True, exact=exact)
     except ValueError as exc:
-        raise DateValidationError(str(exc), path) from exc
+        raise DateValidationError(str(exc), path, date_report_content(attempts, phase)) from exc
     return attempts[-1]
 
 
@@ -213,5 +242,7 @@ def check_stored_date(cell, expected, epoch, report_dir=None):
                   'cell_width_points': None, 'expected_date': expected.isoformat(),
                   'date_ok': date_ok, 'format_ok': brazilian_date_format(cell.number_format),
                   'display_ok': None, 'observation': 'Arquivo OOXML reaberto; propriedades COM não observadas'}
-        path = save_date_report([report], 'verificação independente do arquivo salvo', report_dir)
-        raise DateValidationError(str(exc), path) from exc
+        phase = 'verificação independente do arquivo salvo'
+        try: path = save_date_report([report], phase, report_dir)
+        except (OSError, ValueError): path = None
+        raise DateValidationError(str(exc), path, date_report_content([report], phase)) from exc
