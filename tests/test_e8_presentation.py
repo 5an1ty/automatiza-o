@@ -104,7 +104,7 @@ def test_invariant_format_provides_order_when_local_mask_is_unknown(tmp_path):
 
 @pytest.mark.parametrize('failure', ['date', 'format', 'unexplained'])
 def test_local_report_exists_before_date_error(tmp_path, failure):
-    cell = DateCell()
+    cell = DateCell(render=failure != 'unexplained')
     if failure == 'date': cell.Value2 += 1
     elif failure == 'format': cell._format = 'General'
     else: cell._text = '46331'
@@ -114,7 +114,8 @@ def test_local_report_exists_before_date_error(tmp_path, failure):
     assert report['cell'] == 'E8' and report['phase'] == 'antes de salvar'
     assert {'value', 'value2', 'text', 'number_format', 'number_format_local',
             'cell_width_points', 'expected_date', 'date_ok', 'format_ok', 'display_ok'} <= report['attempts'][0].keys()
-    assert not cell.changes
+    if failure != 'unexplained': assert not cell.changes
+    else: assert cell.changes and not report['display_ok']
 
 
 def test_reports_redact_non_date_values_and_personal_literals(tmp_path):

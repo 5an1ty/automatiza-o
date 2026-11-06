@@ -11,6 +11,7 @@ from openpyxl.utils.datetime import from_excel, CALENDAR_MAC_1904
 
 DATE_FORMAT = 'dd/mm/yyyy'
 PDF_DATE_FORMAT = '[$-416]dd"/"mm"/"yyyy'
+LOCAL_DATE_FORMAT = 'dd"/"mm"/"aaaa'
 
 
 def format_body(number_format):
@@ -67,6 +68,13 @@ def presentation_date(text, order):
     except ValueError: return None
 
 
+def literal_date_mask(text):
+    token = r'(?:\d{1,4}|d{1,2}|m{1,2}|y{4}|a{4}|j{1,4}|t{1,2})'
+    value = normalized_text(text).lower()
+    return bool(re.fullmatch(token + r'\s*([./-])\s*' + token + r'\s*\1\s*' + token, value)
+                and re.search(r'[dmyajt]', value))
+
+
 def safe_value(value):
     if isinstance(value, (date, datetime)): return value.isoformat()
     if isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value): return value
@@ -106,15 +114,21 @@ def inspect_com_date(cell, expected, epoch):
     order = local_order or date_order(number_format)
     order_source = 'NumberFormatLocal' if local_order else 'NumberFormat'
     parsed = presentation_date(text, order)
+    mask_literal = literal_date_mask(text)
     if text == expected.strftime('%d/%m/%Y'):
         display, cause = 'ok', 'DD/MM/AAAA exato'
     elif parsed == expected:
         display, cause = 'regional confirmada', 'Data conferida pela ordem declarada em ' + order_source + ': ' + order.upper()
     elif text and set(text) == {'#'}:
         display, cause = 'largura insuficiente', 'Excel exibiu apenas #; valor e formato são avaliados separadamente'
+    elif mask_literal:
+        display, cause = 'divergente', 'Excel exibiu tokens da máscara literalmente; apresentação ainda não é uma data'
     else:
         display, cause = 'divergente', 'Texto não corresponde à data esperada na ordem declarada; não foi inferida outra ordem'
-    safe_text = text if (parsed is not None or re.fullmatch(r'[\d.,]+|#+', text) or not text) else '<texto não datável omitido>'
+    text_kind = ('numeric_date' if parsed is not None else 'literal_date_mask' if mask_literal else
+                 'hashes' if text and set(text) == {'#'} else 'unrecognized')
+    if parsed is not None and parsed != expected: text_kind = 'different_date'
+    safe_text = text if (parsed is not None or mask_literal or re.fullmatch(r'[\d.,]+|#+', text) or not text) else '<texto não datável omitido>'
     return {
         'value': safe_value(raw_value), 'value_ok': matches(raw_value) if 'Value' not in unavailable else None,
         'value2': safe_value(serial), 'expected_date': expected.isoformat(),
@@ -123,6 +137,7 @@ def inspect_com_date(cell, expected, epoch):
         'number_format_local': safe_format(local_format),
         'local_date_order': local_order, 'display_date_order': order, 'display_order_source': order_source,
         'format_ok': brazilian_date_format(number_format), 'text': safe_text,
+        'text_kind': text_kind, 'text_length': len(text),
         'cell_width_points': safe_value(width), 'column_width_chars': safe_value(column_width),
         'width_ok': False if display == 'largura insuficiente' else
                     (width > 0 if display in ('ok', 'regional confirmada') and isinstance(width, (int, float)) else None),
@@ -200,10 +215,27 @@ def check_com_date(cell, expected, epoch, *, phase, report_dir=None, repair=Fals
     adjustment = ''
     if repair and attempts[0]['date_ok'] and attempts[0]['format_ok']:
         try:
-            if exact or attempts[-1]['display'] == 'largura insuficiente':
-                cell.NumberFormat = PDF_DATE_FORMAT
-                adjustment = 'Localidade pt-BR e barras literais, somente em E8'
-                attempts.append(inspect_com_date(cell, expected, epoch))
+            initial = attempts[0]
+            needs_format = initial['display'] == 'largura insuficiente' or (
+                initial['display'] == 'divergente' and initial['text_kind'] != 'different_date') or (
+                exact and initial['display'] != 'ok' and initial['text_kind'] != 'different_date')
+            if needs_format:
+                # Some localized Excel installations retain the invariant mask
+                # but render year/day tokens literally. Apply the local mask
+                # explicitly on the work copy, then verify the actual result.
+                for property_name, value in (('NumberFormatLocal', LOCAL_DATE_FORMAT),
+                                             ('NumberFormat', PDF_DATE_FORMAT)):
+                    try:
+                        setattr(cell, property_name, value)
+                        adjustment += f'; formato aplicado via {property_name}, somente E8'
+                    except Exception:
+                        adjustment += f'; ajuste via {property_name} recusado pelo Excel'
+                    attempts.append(inspect_com_date(cell, expected, epoch))
+                    current = attempts[-1]
+                    if not current['date_ok']: break
+                    if current['format_ok'] and ((current['display_ok'] and (not exact or current['display'] == 'ok'))
+                                                 or current['display'] == 'largura insuficiente'):
+                        break
             if attempts[-1]['display'] == 'largura insuficiente':
                 # No AutoFit/column resizing: preserve the form and pagination.
                 # Bound shrinkage conservatively; the PDF also checks date font.

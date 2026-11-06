@@ -553,8 +553,9 @@ for insuficiente, a operação falha com a causa e o relatório, sem modificar o
 modelo original. Após salvar e reabrir, valor, formato e apresentação são
 conferidos novamente.
 
-Na cópia temporária de impressão, o formato é forçado para
-`[$-416]dd"/"mm"/"yyyy`. Uma representação regional equivalente pode ser aceita
+Na cópia temporária de impressão, a apresentação exata é conferida e, quando
+necessário, reaplicada usando a máscara local `dd"/"mm"/"aaaa` ou a máscara
+invariante `[$-416]dd"/"mm"/"yyyy`. Uma representação regional equivalente pode ser aceita
 na leitura do Excel, mas **o PDF exige o texto exato DD/MM/AAAA com barras e uma
 data legível de pelo menos oito pontos**. A leitura do conteúdo do PDF, A4,
 quantidade de páginas e preservação do formulário continuam sendo verificadas;
@@ -601,3 +602,35 @@ formato e apresentação de E8 permanecem ativas. Isso corrige o acesso ao diagn
 não estabelece a causa específica da divergência que ocorre no Excel do usuário.
 A reprodução e validação dessa divergência ainda exigem as observações reais do
 Windows, obtidas pelo novo diálogo ou pelo diagnóstico local já documentado.
+
+
+## Reaplicação do formato local após diagnóstico real de E8
+
+O diagnóstico fornecido pelo usuário confirmou serial correto, data esperada e
+formato brasileiro válidos, com 134,25 pontos de largura, mas Text não reconhecido.
+O texto havia sido omitido pelo filtro de privacidade, portanto sua representação
+exata ainda não estava disponível. A rotina anterior só tentava reparar largura
+ou preparar o PDF: não reaplicava formato nesse caso de apresentação desconhecida.
+
+Agora, na cópia de trabalho e **somente se valor e formato armazenados forem
+válidos**, tenta primeiro `NumberFormatLocal = 'dd"/"mm"/"aaaa'`. Se não confirmar
+a apresentação, tenta a máscara invariante pt-BR com barras literais. Cada tentativa
+é inspecionada novamente: não se modifica Value2, não se aceita texto por suposição
+e não se confunde uma data numérica realmente diferente com problema de formato.
+A conferência após salvar e reabrir permanece. Larguras de colunas, estrutura,
+proteção e modelo original continuam preservados.
+
+Os relatórios passam a identificar `text_kind` e preservar sequências restritas
+de máscara de data, como `06/11/yyyy`, `dd/11/yyyy` ou `06/mm/2026`. São exemplos
+sintéticos, não uma afirmação sobre o texto ocultado no relatório anterior.
+Textos pessoais ou arbitrários continuam omitidos. Se o ajuste local não for
+confirmado, a geração permanece bloqueada e os detalhes continuam disponíveis
+nos botões Salvar/Copiar diagnóstico.
+
+**167 testes passaram, nenhum falhou** em Python 3.12/Linux. Novos testes cobrem
+máscaras parcialmente literais, aplicação local, fallback invariante, recusa de
+ambos os ajustes, serial incorreto que não pode ser reparado como apresentação e
+salvamento/reabertura da cópia com a máscara local confirmada. Os testes COM são
+simulados. A confirmação da apresentação específica no Windows do usuário continua
+necessária; não se declara que o texto ocultado era uma máscara literal nem que
+a instalação real do Excel já foi homologada.
