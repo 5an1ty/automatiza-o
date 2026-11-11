@@ -36,6 +36,8 @@ def button(text, handler, primary=False):
 def item_status(item):
     if item.pending_fields():
         return 'Incompleto', 'warning'
+    if item.price_fill_later:
+        return ('Preço a preencher · aprovado', 'success') if item.approved else ('Preço a preencher · aprovar', 'warning')
     if item.approved:
         return 'Pronto para gerar', 'success'
     if any(e.origin == 'manual' for e in item.evidence.values()):

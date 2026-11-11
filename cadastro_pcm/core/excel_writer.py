@@ -141,6 +141,8 @@ def check_template(template, item, sheet, authorized_sha):
             description += '\nNCM: ' + item.ncm
         values = {address: getattr(item, field) for field, address in MAP.items()}
         values['A14'] = description
+        if item.price_fill_later:
+            values['A20'] = None
         # An empty optional field already empty in the template needs no edit.
         # Preserve it instead of reassigning a blank through a restrictive list.
         values = {address: value for address, value in values.items()
@@ -186,7 +188,9 @@ def write_excel(template, destination, item, sheet, authorized_sha):
             if isinstance(value, date):
                 if address == 'E8': styles_xml = date_style(source, cell)
                 value = to_excel(value, epoch)
-            if isinstance(value, (float, int)) or address == 'A20':
+            if value is None:
+                cell.attrib.pop('t', None)
+            elif isinstance(value, (float, int)) or address == 'A20':
                 cell.attrib['t'] = 'n'
                 ET.SubElement(cell, f'{{{NS}}}v').text = str(value)
             else:
@@ -292,7 +296,7 @@ def write_excel_com(template, destination, values, sheet, epoch):
             for address, value in values.items():
                 if isinstance(value, date):
                     value = to_excel(value, epoch)
-                elif address == 'A20':
+                elif address == 'A20' and value is not None:
                     value = float(value)
                 if address == 'E8':
                     ws.Range(address).Value2 = float(value)

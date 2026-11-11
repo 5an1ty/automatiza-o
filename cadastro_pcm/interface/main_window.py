@@ -4,7 +4,7 @@ import os
 import sys
 from datetime import date
 from pathlib import Path
-from PySide6.QtCore import QThread, Signal, QUrl, Qt
+from PySide6.QtCore import QThread, Signal, QUrl, Qt, QItemSelectionModel
 from PySide6.QtGui import QDesktopServices, QColor
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QListWidget, QTableWidget, QTableWidgetItem, QMessageBox,
@@ -94,11 +94,23 @@ class Editor(QDialog):
             group = 'Material e valores' if key in ('name', 'description', 'unit_price', 'ncm') else 'Cadastro e solicitação'
             forms[group].addRow(f'{field_label} · {origin}', control)
             self.inputs[key] = control
+            if key == 'unit_price':
+                self.price_later = QCheckBox('Preencher preço posteriormente no Excel')
+                self.price_later.setChecked(item.price_fill_later)
+                forms[group].addRow(self.price_later)
+                self.price_warning = label('Preço não informado. O campo Valor Material ficará vazio no Excel e no PDF.', 'muted')
+                forms[group].addRow(self.price_warning)
+                self.price_later.toggled.connect(self.update_price_option)
+                self.update_price_option()
         self.ncm_na = QCheckBox('NCM fiscal não se aplica a este item (confirmado pelo responsável).')
         self.ncm_na.setChecked(item.ncm_not_applicable)
         layout.addWidget(self.ncm_na)
         self.confirm = QCheckBox('Revisei todos os dados, fontes e estimativas; aprovo este item.')
         layout.addWidget(self.confirm)
+        for control in self.inputs.values():
+            control.textChanged.connect(lambda *args: self.confirm.setChecked(False))
+        self.ncm_na.toggled.connect(lambda *_: self.confirm.setChecked(False))
+        self.price_later.toggled.connect(lambda *_: self.confirm.setChecked(False))
         layout.addWidget(QLabel('Tipo e assinaturas permanecem vazios. NCM ausente exige confirmação de não aplicabilidade.'))
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(lambda: self.save(item)); buttons.rejected.connect(self.reject)
@@ -107,16 +119,24 @@ class Editor(QDialog):
         buttons.button(QDialogButtonBox.Cancel).setText('Cancelar')
         layout.addWidget(buttons)
 
+    def update_price_option(self):
+        later = self.price_later.isChecked()
+        self.inputs['unit_price'].setEnabled(not later)
+        self.price_warning.setVisible(later)
+
     def save(self, item):
         try:
             data = item.model_dump()
             for key, control in self.inputs.items():
                 value = control.toPlainText() if isinstance(control, QTextEdit) else control.text().strip()
+                if key == 'unit_price' and self.price_later.isChecked():
+                    value = ''
                 if key in ('quantity', 'unit_price', 'total_price'):
                     value = decimal_br(value) if value else None
                 if str(value) != str(getattr(item, key)):
                     data['evidence'][key] = Evidence(origin='manual', source='Revisão do usuário').model_dump()
                 data[key] = value
+            data['price_fill_later'] = self.price_later.isChecked()
             data['ncm_not_applicable'] = self.ncm_na.isChecked()
             data['approved'] = self.confirm.isChecked()
             self.result_item = Item.model_validate(data)
@@ -168,6 +188,11 @@ class Window(QMainWindow):
         layout.addWidget(intake)
         review_header = QHBoxLayout()
         review_header.addWidget(label('Revisão dos itens', 'section')); review_header.addStretch()
+        self.select_all_button = button('Selecionar todos', self.toggle_all_items)
+        self.select_all_button.setToolTip('Seleciona ou desmarca somente os materiais visíveis na tabela; não altera dados nem aprovações.')
+        self.approve_selected_button = button('Aprovar selecionados', self.approve_selected)
+        review_header.addWidget(self.select_all_button)
+        review_header.addWidget(self.approve_selected_button)
         review_header.addWidget(button('Adicionar item manual', self.add_item))
         self.process_button = button('Processar PDFs', self.process, True)
         review_header.addWidget(self.process_button); layout.addLayout(review_header)
@@ -360,7 +385,7 @@ class Window(QMainWindow):
 
     def update_summary(self):
         count = self.documents.count()
-        ready = sum(item_status(item)[0] == 'Pronto para gerar' for item in self.items)
+        ready = sum(not eligibility(item) for item in self.items)
         files = f'{count} PDF' + ('s carregados' if count != 1 else ' carregado')
         items = f'{len(self.items)} itens · {ready} prontos para geração' if self.items else 'Nenhum item identificado ainda'
         self.status.setText(files + '  ·  ' + items)
@@ -372,6 +397,10 @@ class Window(QMainWindow):
                      and self.settings.authorized_template_sha256)
         self.batch_button.setEnabled(bool(eligible and model and sys.platform == 'win32'))
         selected_rows = self.selected_rows()
+        visible = self.visible_rows()
+        self.select_all_button.setEnabled(bool(visible))
+        self.select_all_button.setText('Desmarcar todos' if visible and set(visible).issubset(selected_rows) else 'Selecionar todos')
+        self.approve_selected_button.setEnabled(bool(selected_rows))
         self.selected_batch_button.setEnabled(bool(model and sys.platform == 'win32' and
             any(not eligibility(self.items[r]) for r in selected_rows)))
         self.batch_button.setToolTip('Gera Excel e PDF separados. PDF requer Windows e Microsoft Excel.')
@@ -427,7 +456,7 @@ class Window(QMainWindow):
             item = self.items[row]; status, tone = item_status(item)
             self.detail_badge.setText(status); self.detail_badge.setProperty('tone', tone)
             lines = [item.name, '', 'DESCRIÇÃO TÉCNICA', clean_description(item.description) or 'Pendente', '',
-                     f'Preço unitário: {money_br(item.unit_price)}', f'NCM fiscal: {item.ncm or "Pendente"}',
+                     f'Preço unitário: {"Preço a preencher no Excel" if item.price_fill_later else money_br(item.unit_price)}', f'NCM fiscal: {item.ncm or "Pendente"}',
                      '', 'ORIGEM E EVIDÊNCIAS']
             for field, evidence in item.evidence.items():
                 if field in ('quantity', 'total_price', 'manufacturer', 'manufacturer_code', 'item_ref'): continue
@@ -450,7 +479,7 @@ class Window(QMainWindow):
         self.table.setRowCount(len(self.items))
         for row, item in enumerate(self.items):
             status, tone = item_status(item)
-            values = [item.name, money_br(item.unit_price), item.ncm or 'Pendente',
+            values = [item.name, 'Preço a preencher' if item.price_fill_later else money_br(item.unit_price), item.ncm or 'Pendente',
                       '; '.join(sorted({e.source for e in item.evidence.values() if e.source})), status]
             for col, value in enumerate(values):
                 cell = QTableWidgetItem(value); cell.setToolTip(value)
@@ -640,6 +669,56 @@ class Window(QMainWindow):
                 QMessageBox.information(self, 'Arquivos gerados', f'{folder}\n' + ('Confira visualmente o PDF antes de imprimir: texto, Tipo e assinaturas.' if pdf else 'Excel e registro JSON salvos.'))
             self.run_job(task, done)
         except Exception as exc: QMessageBox.warning(self, 'Geração', str(exc))
+
+    def visible_rows(self):
+        return [r for r in range(len(self.items)) if not self.table.isRowHidden(r)]
+
+    def toggle_all_items(self):
+        visible = self.visible_rows()
+        deselect = set(visible).issubset(self.selected_rows())
+        selection = self.table.selectionModel()
+        flag = QItemSelectionModel.Deselect if deselect else QItemSelectionModel.Select
+        self.table.blockSignals(True)
+        for row in visible:
+            selection.select(self.table.model().index(row, 0), flag | QItemSelectionModel.Rows)
+        self.table.blockSignals(False)
+        self.update_details()
+
+    def approve_selected(self):
+        rows = self.selected_rows()
+        if not rows or self.worker is not None:
+            return
+        eligible, pending = [], []
+        for row in rows:
+            item = self.items[row]
+            missing = item.pending_fields()
+            if missing:
+                pending.append(f'{item.name or "Sem nome"}: ' + '; '.join(missing))
+            else:
+                eligible.append(row)
+        deferred = sum(self.items[r].price_fill_later for r in eligible)
+        summary = (f'{len(rows)} materiais selecionados\n'
+                   f'{len(eligible) - deferred} com informações completas\n'
+                   f'{deferred} com preço a preencher no Excel\n'
+                   f'{len(eligible)} aptos para aprovação\n{len(pending)} com pendências')
+        if pending:
+            summary += '\n\nNão serão aprovados:\n' + '\n'.join(pending)
+        if not eligible:
+            QMessageBox.information(self, 'Aprovação em lote', summary)
+            return
+        if QMessageBox.question(self, 'Confirmar aprovação em lote', summary +
+                f'\n\nRevisei os dados e desejo aprovar os {len(eligible)} materiais aptos?') != QMessageBox.Yes:
+            return
+        for row in eligible:
+            self.items[row].approved = True
+        self.refresh()
+        self.table.clearSelection()
+        for row in rows:
+            self.table.selectionModel().select(self.table.model().index(row, 0),
+                QItemSelectionModel.Select | QItemSelectionModel.Rows)
+        QMessageBox.information(self, 'Aprovação em lote',
+                                f'{len(eligible)} materiais aprovados.\n{len(pending)} não aprovados por pendências.' +
+                                ('\n\n' + '\n'.join(pending) if pending else ''))
 
     def selected_rows(self):
         return sorted({index.row() for index in self.table.selectionModel().selectedRows()

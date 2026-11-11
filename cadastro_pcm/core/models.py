@@ -39,6 +39,7 @@ class Item(BaseModel):
     requester: str = ''
     area: str = 'MANUTENÇÃO'
     request_date: date = Field(default_factory=date.today)
+    price_fill_later: bool = False
     approved: bool = False
     evidence: dict[str, Evidence] = Field(default_factory=dict)
 
@@ -58,7 +59,7 @@ class Item(BaseModel):
         elif commercial_line(self.name.strip().splitlines()[0]):
             missing.append('Identificação do material (o nome informado é uma condição comercial)')
         if not self.requester.strip(): missing.append('Requisitante')
-        if self.unit_price is None: missing.append('Preço unitário confirmado')
+        if self.unit_price is None and not self.price_fill_later: missing.append('Preço unitário confirmado')
         if not self.ncm and not self.ncm_not_applicable:
             missing.append('NCM fiscal (informe o código ou confirme que não se aplica no editor)')
         return missing

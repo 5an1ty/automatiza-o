@@ -79,8 +79,8 @@ calculadas/dinâmicas e validações personalizadas são bloqueadas conservadora
 6. Para consulta externa, pesquise fora do programa em fontes autorizadas e use
    **Registrar pesquisa** para informar valor, URL e eventual estimativa. O programa
    pede confirmação antes de substituir; a aprovação do item é invalidada.
-7. Revise dados e fontes e marque a aprovação. Nome, requisitante e preço unitário
-   confirmado são obrigatórios. NCM ausente bloqueia a aprovação até que o código seja informado ou o
+7. Revise dados e fontes e marque a aprovação. Nome e requisitante são obrigatórios; o preço unitário
+   confirmado também, salvo autorização individual de preenchimento posterior no Excel. NCM ausente bloqueia a aprovação até que o código seja informado ou o
    responsável marque explicitamente que ele não se aplica no editor. Oito dígitos válidos não comprovam classificação fiscal correta.
 8. Gere Excel ou Excel + PDF para o item selecionado. Cada operação cria uma pasta
    exclusiva `NOME_identificador/cadastro.xlsx`, `registro.json` e, quando solicitado,
@@ -674,3 +674,41 @@ substituem a validação de um lote no Windows com Excel real nem a homologaçã
 
 Validação desta entrega: **177 testes passaram**, nenhum falhou, em Python 3.12/Linux
 com Qt offscreen. A geração em lote via Excel real continua dependente de teste no Windows.
+
+## Preço a preencher e aprovação de vários itens
+
+Em **Editar e revisar item**, ao lado do preço, marque **Preencher preço posteriormente
+no Excel** somente para os materiais em que deseja omitir o valor. A opção começa
+desmarcada e é individual. O aviso informa que Valor Material ficará vazio no Excel
+e no PDF; a tabela identifica esses materiais como **Preço a preencher**. Desmarque
+a opção para informar o preço normalmente. Sem preço e sem essa autorização, o
+item continua bloqueado. Nenhum valor zero é criado para substituir um preço ausente.
+
+A autorização fica no campo `price_fill_later` do registro JSON de cada material.
+Registros antigos assumem `false`. Quando autorizada, a cópia gerada fica com A20
+vazio, mesmo que o modelo tenha um preço anterior. Formatação e proteção permanecem;
+uma fórmula ou um valor protegido que precise ser removido bloqueia a operação.
+O modelo original nunca é alterado. A opção funciona na geração individual e em lote.
+
+Na revisão, **Selecionar todos** seleciona os materiais visíveis; o mesmo botão passa
+a **Desmarcar todos**. Ctrl/clique e Shift/clique continuam permitindo seleção parcial.
+A seleção não altera dados nem aprovações. **Aprovar selecionados** apresenta os totais
+de itens completos, preços a preencher autorizados e pendências, incluindo os motivos
+por material. Só os itens aptos recebem aprovação após confirmação humana explícita.
+A ação não concede autorização de omitir preço a nenhum item.
+
+Para gerar dez materiais, revise os dados, autorize individualmente os preços que
+ficarão em branco, selecione os itens e confirme **Aprovar selecionados**. Em seguida,
+use **Gerar todos os aprovados** ou **Gerar selecionados**. Os materiais com outras
+pendências permanecem bloqueados. A revisão e a aprovação individual continuam
+disponíveis; salvar uma revisão sem marcar a aprovação a revoga. Alterar um campo
+depois de marcar a confirmação no editor também desmarca essa confirmação.
+
+A lista de revisão continua em memória durante a sessão; a geração salva o registro
+JSON com a decisão do preço. Esta atualização não adiciona restauração automática de
+sessões. Os testes de PDF/COM usam simulações explícitas no Linux, não Excel real.
+
+Validação desta atualização: **192 testes passaram**, nenhum falhou, em Python 3.12/Linux
+com Qt offscreen. Inclui preço opcional, A20 vazio nos dois backends de escrita
+(COM simulado), PDF com preço vazio (exportação nativa simulada), seleção, confirmação
+de aprovação em lote, pendências, revogação após edição e os testes anteriores.
