@@ -17,9 +17,9 @@ from cadastro_pcm.core.settings import load_settings, save_settings
 from cadastro_pcm.core.pdf_reader import read_pdf
 from cadastro_pcm.core.item_extractor import extract_items
 from cadastro_pcm.core.product_text import clean_description
-from cadastro_pcm.core.excel_writer import inspect_template, write_excel, check_template
+from cadastro_pcm.core.excel_writer import inspect_template, write_excel, check_template, fingerprint
 from cadastro_pcm.core.pdf_exporter import export_pdf
-from cadastro_pcm.core.file_manager import new_output
+from cadastro_pcm.core.generation import generate_documents, generate_batch, eligibility
 from cadastro_pcm.core.research import STATUS, apply_suggestion
 from cadastro_pcm.core.excel_date import date_error_payload
 
@@ -28,6 +28,7 @@ class Worker(QThread):
     done = Signal(object)
     failed = Signal(str)
     diagnostic = Signal(object)
+    progress = Signal(int, int, str)
 
     def __init__(self, function):
         super().__init__()
@@ -174,7 +175,7 @@ class Window(QMainWindow):
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(['Material', 'Preço unitário', 'NCM', 'Origem', 'Validação'])
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setAlternatingRowColors(True); self.table.setShowGrid(False)
         self.table.verticalHeader().hide(); self.table.verticalHeader().setDefaultSectionSize(48)
@@ -200,6 +201,11 @@ class Window(QMainWindow):
         self.pdf_button = button('Gerar Excel + PDF', lambda: self.generate(True), True)
         self.retry_button = button('Exportar PDF do Excel salvo', self.retry_export)
         row.addWidget(self.excel_button); row.addWidget(self.pdf_button); row.addWidget(self.retry_button); actions.addLayout(row)
+        row = QHBoxLayout()
+        self.batch_button = button('Gerar todos os aprovados (0)', self.generate_all, True)
+        self.selected_batch_button = button('Gerar selecionados', self.generate_selected)
+        row.addWidget(self.batch_button); row.addWidget(self.selected_batch_button); row.addStretch()
+        actions.addLayout(row)
         self.generation_hint = label('', 'muted'); actions.addWidget(self.generation_hint)
         row = QHBoxLayout(); row.addWidget(label('Conferir e finalizar', 'muted')); row.addStretch()
         self.preview_button = button('Visualizar PDF', self.preview)
@@ -261,10 +267,12 @@ class Window(QMainWindow):
         if self.worker is not None:
             QMessageBox.information(self, 'Aguarde', 'Uma operação está em andamento.'); return
         self.centralWidget().setEnabled(False)
+        self.progress.setRange(0, 0)
         self.progress.show()
         self.status.setText('Trabalhando nos documentos. Aguarde um instante…')
         self.job_message = ''
         self.worker = Worker(function)
+        self.worker.progress.connect(self.batch_progress)
         self.worker.done.connect(callback)
         self.last_error = ''
         self.date_diagnostic = None
@@ -284,6 +292,11 @@ class Window(QMainWindow):
             self.update_summary()
             if self.job_message:
                 self.status.setText(self.job_message)
+
+        if getattr(self, '_batch_summary', None) is not None:
+            summary = self._batch_summary
+            self._batch_summary = None
+            self.show_batch_results(*summary)
 
     def process(self):
         paths = [self.document_path(i) for i in range(self.documents.count())]
@@ -353,6 +366,15 @@ class Window(QMainWindow):
         self.status.setText(files + '  ·  ' + items)
 
     def update_actions(self):
+        eligible = sum(not eligibility(item) for item in self.items)
+        self.batch_button.setText(f'Gerar todos os aprovados ({eligible})')
+        model = bool(self.settings.template and Path(self.settings.template).is_file()
+                     and self.settings.authorized_template_sha256)
+        self.batch_button.setEnabled(bool(eligible and model and sys.platform == 'win32'))
+        selected_rows = self.selected_rows()
+        self.selected_batch_button.setEnabled(bool(model and sys.platform == 'win32' and
+            any(not eligibility(self.items[r]) for r in selected_rows)))
+        self.batch_button.setToolTip('Gera Excel e PDF separados. PDF requer Windows e Microsoft Excel.')
         row = self.table.currentRow()
         selected = 0 <= row < len(self.items)
         reasons = []
@@ -603,22 +625,7 @@ class Window(QMainWindow):
             row, original = self.selected(); item = original.model_copy(deep=True); item.require_ready()
             settings = self.settings.model_copy(deep=True)
             def task():
-                folder = new_output(settings.output, item.name)
-                try:
-                    xlsx = write_excel(settings.template, folder / 'cadastro.xlsx', item, settings.sheet, settings.authorized_template_sha256)
-                except Exception as exc:
-                    raise RuntimeError(f'Excel não gerado. Confira modelo, acesso ao Microsoft Excel e permissões de gravação: {exc}') from exc
-                if not Path(xlsx).is_file(): raise RuntimeError('O arquivo Excel não foi criado.')
-                (folder / 'registro.json').write_text(item.model_dump_json(indent=2), encoding='utf-8')
-                error, diagnostic = '', None
-                if pdf:
-                    try:
-                        export_pdf(xlsx, folder / 'cadastro.pdf', settings.sheet, item.name, settings.expected_pages)
-                        if not (folder / 'cadastro.pdf').is_file(): raise RuntimeError('O arquivo PDF não foi criado.')
-                    except Exception as exc:
-                        error = f'O Excel e o registro foram salvos em {folder}. O PDF não foi gerado: {exc}. Use Exportar PDF do Excel salvo para tentar novamente.'
-                        diagnostic = date_error_payload(exc)
-                return folder, error, diagnostic
+                return generate_documents(item, settings, pdf, writer=write_excel, exporter=export_pdf)
             def done(result):
                 folder, error, diagnostic = result
                 self.outputs[row] = folder
@@ -633,6 +640,78 @@ class Window(QMainWindow):
                 QMessageBox.information(self, 'Arquivos gerados', f'{folder}\n' + ('Confira visualmente o PDF antes de imprimir: texto, Tipo e assinaturas.' if pdf else 'Excel e registro JSON salvos.'))
             self.run_job(task, done)
         except Exception as exc: QMessageBox.warning(self, 'Geração', str(exc))
+
+    def selected_rows(self):
+        return sorted({index.row() for index in self.table.selectionModel().selectedRows()
+                       if index.row() < len(self.items)})
+
+    def generate_all(self):
+        self.start_batch(list(range(len(self.items))))
+
+    def generate_selected(self):
+        self.start_batch(self.selected_rows())
+
+    def batch_progress(self, position, total, name):
+        self.progress.setRange(0, total)
+        self.progress.setValue(position - 1)
+        self.status.setText(f'Gerando cadastro {position} de {total} — {name}')
+
+    def start_batch(self, rows, root=None, settings=None):
+        if self.worker is not None:
+            return
+        settings = (settings or self.settings).model_copy(deep=True)
+        entries = [(r, self.items[r].model_copy(deep=True)) for r in rows]
+        eligible = [(r, i) for r, i in entries if not eligibility(i)]
+        if not eligible:
+            QMessageBox.warning(self, 'Geração em lote', 'Nenhum item aprovado e sem pendências.')
+            return
+        try:
+            if not settings.authorized_template_sha256 or fingerprint(settings.template) != settings.authorized_template_sha256:
+                raise ValueError('Inspecione e autorize o modelo nas Configurações.')
+        except Exception as exc:
+            QMessageBox.warning(self, 'Modelo incompatível', str(exc))
+            return
+        skipped = len(entries) - len(eligible)
+        if QMessageBox.question(self, 'Confirmar geração em lote',
+                f'Gerar Excel e PDF separados para {len(eligible)} itens aprovados?\n'
+                f'{skipped} itens pendentes não serão incluídos. Confira os PDFs antes de imprimir.') != QMessageBox.Yes:
+            return
+        def task():
+            return generate_batch(entries, settings, self.worker.progress.emit, root)
+        def done(result):
+            folder, results = result
+            for result in results:
+                if result.folder is not None and (result.folder / 'cadastro.xlsx').is_file():
+                    self.outputs[result.row] = result.folder
+                    self.output_specs[result.row] = (settings.sheet, result.item.name, settings.expected_pages)
+            self._batch_summary = (folder, results, settings)
+            self.job_message = f'Lote concluído · {folder}'
+        self.run_job(task, done)
+
+    def show_batch_results(self, folder, results, settings):
+        dialog = QDialog(self); dialog.setWindowTitle('Resultado da geração em lote'); dialog.resize(950, 500)
+        layout = QVBoxLayout(dialog)
+        success = sum(r.status == 'sucesso' for r in results)
+        failed = [r for r in results if r.status == 'erro']
+        skipped = sum(r.status == 'ignorado' for r in results)
+        layout.addWidget(label(f'{success + len(failed)} materiais aprovados · {success} cadastros gerados · '
+                               f'{len(failed)} com erro · {skipped} pendentes não incluídos'))
+        table = QTableWidget(len(results), 4)
+        table.setHorizontalHeaderLabels(['Material', 'Resultado', 'Motivo', 'Pasta'])
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        for row, result in enumerate(results):
+            for col, text in enumerate((result.item.name, result.status, result.reason,
+                                       str(result.folder or ''))):
+                cell = QTableWidgetItem(text); cell.setToolTip(text); table.setItem(row, col, cell)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout.addWidget(table)
+        actions = QHBoxLayout()
+        actions.addWidget(button('Abrir pasta do lote', lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder.resolve())))))
+        retry = button('Tentar novamente os itens com falha', dialog.accept)
+        retry.setEnabled(bool(failed)); actions.addWidget(retry)
+        actions.addWidget(button('Fechar', dialog.reject)); layout.addLayout(actions)
+        if dialog.exec() == QDialog.Accepted:
+            self.start_batch([r.row for r in failed], folder, settings)
 
     def retry_export(self):
         try:

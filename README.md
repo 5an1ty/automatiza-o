@@ -634,3 +634,43 @@ salvamento/reabertura da cópia com a máscara local confirmada. Os testes COM s
 simulados. A confirmação da apresentação específica no Windows do usuário continua
 necessária; não se declara que o texto ocultado era uma máscara literal nem que
 a instalação real do Excel já foi homologada.
+
+## Geração em lote de cadastros
+
+No Windows com Microsoft Excel instalado, revise cada item e marque sua aprovação
+humana no editor. Em **Gerar documentos**, clique em **Gerar todos os aprovados (N)**.
+O contador considera somente itens explicitamente aprovados e sem campos pendentes.
+A configuração e a autorização do modelo continuam obrigatórias; a compatibilidade
+de cada item com a aba e suas validações é conferida durante o processamento.
+
+Para gerar parte da lista, selecione linhas com Ctrl/clique ou Shift/clique e use
+**Gerar selecionados**. Confirme a quantidade antes de iniciar. Itens sem aprovação
+ou com pendências são ignorados e aparecem no resumo com o motivo. A aprovação não
+é concedida automaticamente. Os botões de geração individual continuam disponíveis.
+
+A geração ocorre em segundo plano, sequencialmente, com progresso por material.
+Cada item recebe Excel, PDF e registro JSON separados, usando as mesmas rotinas da
+geração individual. O lote fica em `lote_AAAA-MM-DD_HHMM_identificador`, dentro da
+saída configurada; cada material tem uma subpasta com nome seguro e identificador
+exclusivo, inclusive quando nomes coincidem. Execuções anteriores não são sobrescritas.
+O modelo original, proteções, Tipo e assinaturas seguem as regras existentes.
+
+O resumo mostra sucesso, erro ou exclusão por pendência, motivo e pasta por item.
+Use **Abrir pasta do lote** para conferir os documentos. **Tentar novamente os itens
+com falha** gera somente esses itens em novas subpastas do mesmo lote, após nova
+confirmação e validação. Os arquivos anteriores permanecem intactos. Se a exportação
+PDF falhar, o Excel e o registro já salvos são preservados; também é possível selecionar
+o item e usar **Exportar PDF do Excel salvo**, sem gerar outro Excel.
+
+A interface bloqueia alterações enquanto trabalha e aguarda a conclusão antes de
+fechar. Cada operação nativa inicializa e libera COM na thread responsável, abre
+uma instância isolada do Excel e encerra somente essa instância. Não há paralelismo
+entre documentos do lote. Confira visualmente os PDFs antes de imprimir.
+
+Os testes de lote usam planilhas sintéticas e exportação PDF/COM simulada no Linux:
+validam lotes unitários e múltiplos, pendências, seleção, nomes repetidos, falhas,
+continuação, preservação, nova tentativa, progresso e liberação de recursos. Não
+substituem a validação de um lote no Windows com Excel real nem a homologação visual.
+
+Validação desta entrega: **177 testes passaram**, nenhum falhou, em Python 3.12/Linux
+com Qt offscreen. A geração em lote via Excel real continua dependente de teste no Windows.
