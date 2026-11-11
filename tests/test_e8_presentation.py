@@ -240,8 +240,11 @@ def test_pdf_copy_has_readable_date_and_original_dimensions(tmp_path, monkeypatc
         assert exports
         with pymupdf.open(target) as doc: assert len(doc) == 1 and '05/11/2026' in doc[0].get_text()
     else:
-        with pytest.raises(DateValidationError):
+        from cadastro_pcm.core.pdf_diagnostics import PdfExportError
+        with pytest.raises(PdfExportError) as failure:
             pdf_exporter.export_pdf(source, target, 'Criação de Material Nacional', 'Produto')
+        assert isinstance(failure.value.__cause__, DateValidationError)
+        assert failure.value.report['date_diagnostic']['cell'] == 'E8'
         assert not exports and not target.exists()
     assert source.read_bytes() == original and cell.Width == 100 and cell.ColumnWidth == 15
 

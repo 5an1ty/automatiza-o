@@ -9,7 +9,7 @@ from PySide6.QtGui import QDesktopServices, QColor
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QListWidget, QTableWidget, QTableWidgetItem, QMessageBox,
     QFileDialog, QDialog, QFormLayout, QLineEdit, QTextEdit, QCheckBox,
-    QDialogButtonBox, QLabel, QComboBox, QSplitter, QHeaderView, QProgressBar, QTabWidget, QListWidgetItem, QApplication)
+    QDialogButtonBox, QLabel, QComboBox, QSplitter, QHeaderView, QProgressBar, QTabWidget, QListWidgetItem, QApplication, QMenu)
 from .theme import QSS
 from .components import label, badge, card, button, item_status
 from .approval_dialog import ApprovalDialog
@@ -22,7 +22,7 @@ from cadastro_pcm.core.excel_writer import inspect_template, write_excel, check_
 from cadastro_pcm.core.pdf_exporter import export_pdf
 from cadastro_pcm.core.generation import generate_documents, generate_batch, eligibility
 from cadastro_pcm.core.research import STATUS, apply_suggestion
-from cadastro_pcm.core.excel_date import date_error_payload
+from cadastro_pcm.core.pdf_diagnostics import diagnostic_payload as date_error_payload, usable_pdf
 
 
 class Worker(QThread):
@@ -39,8 +39,12 @@ class Worker(QThread):
         try:
             self.done.emit(self.function())
         except Exception as exc:
-            logging.exception('Falha na operação')
-            if payload := date_error_payload(exc): self.diagnostic.emit(payload)
+            payload = date_error_payload(exc)
+            if payload:
+                logging.error('Falha na operação com diagnóstico sanitizado disponível.')
+                self.diagnostic.emit(payload)
+            else:
+                logging.exception('Falha na operação')
             self.failed.emit(str(exc))
 
 
@@ -172,7 +176,12 @@ class Window(QMainWindow):
         headings.addWidget(label('Cadastro PCM', 'title'))
         headings.addWidget(label('Da cotação ao cadastro. Revise com confiança, gere com precisão.', 'muted'))
         header.addLayout(headings); header.addStretch()
-        header.addWidget(button('Diagnóstico', self.diagnostics)); header.addWidget(button('Configurações', self.configure)); layout.addLayout(header)
+        diagnostic_button = QPushButton('Diagnóstico')
+        menu = QMenu(diagnostic_button)
+        menu.addAction('Diagnóstico completo', self.diagnostics)
+        menu.addAction('Testar exportação PDF', self.test_pdf_export)
+        diagnostic_button.setMenu(menu)
+        header.addWidget(diagnostic_button); header.addWidget(button('Configurações', self.configure)); layout.addLayout(header)
         indicators = QHBoxLayout()
         self.model_indicator = badge('Modelo não configurado', 'warning')
         self.output_indicator = label('', 'muted')
@@ -247,7 +256,10 @@ class Window(QMainWindow):
         row = QHBoxLayout()
         self.batch_button = button('Gerar todos os aprovados (0)', self.generate_all, True)
         self.selected_batch_button = button('Gerar selecionados', self.generate_selected)
-        row.addWidget(self.batch_button); row.addWidget(self.selected_batch_button); row.addStretch()
+        row.addWidget(self.batch_button); row.addWidget(self.selected_batch_button)
+        existing_button = button('Gerar PDF a partir de Excel existente', self.export_existing_excel)
+        existing_button.setEnabled(sys.platform == 'win32')
+        row.addWidget(existing_button); row.addStretch()
         actions.addLayout(row)
         self.generation_hint = label('', 'muted'); actions.addWidget(self.generation_hint)
         row = QHBoxLayout(); row.addWidget(label('Conferir e finalizar', 'muted')); row.addStretch()
@@ -454,7 +466,7 @@ class Window(QMainWindow):
             except OSError as exc:
                 reasons.append('Falha de acesso ao modelo: ' + str(exc))
         ready = not reasons
-        pdf = selected and row in self.outputs and (self.outputs[row] / 'cadastro.pdf').is_file()
+        pdf = selected and row in self.outputs and usable_pdf(self.outputs[row] / 'cadastro.pdf')
         self.edit_button.setEnabled(selected); self.research_button.setEnabled(selected)
         self.excel_button.setEnabled(ready); self.pdf_button.setEnabled(ready and sys.platform == 'win32')
         reason = '\n'.join(reasons) if reasons else 'Item aprovado e modelo conferido. Pronto para gerar Excel.'
@@ -540,7 +552,7 @@ class Window(QMainWindow):
         save = box.addButton('Salvar diagnóstico…', QMessageBox.ActionRole)
         copy = box.addButton('Copiar diagnóstico', QMessageBox.ActionRole)
         def save_report():
-            selected = QFileDialog.getSaveFileName(box, 'Salvar diagnóstico de E8', 'diagnostico_data.json', 'JSON (*.json)')[0]
+            selected = QFileDialog.getSaveFileName(box, 'Salvar diagnóstico local', 'diagnostico_pcm.json', 'JSON (*.json)')[0]
             if not selected: return
             target = Path(selected)
             if target.suffix.lower() != '.json': target = Path(str(target) + '.json')
@@ -609,6 +621,56 @@ class Window(QMainWindow):
             save.clicked.connect(save_local)
             dialog.exec()
         self.run_job(lambda: diagnose(settings), done)
+
+    def save_pdf_report(self, report):
+        path = QFileDialog.getSaveFileName(self, 'Salvar diagnóstico PDF', 'diagnostico_pdf.json', 'JSON (*.json)')[0]
+        if path:
+            try:
+                Path(path).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+            except OSError:
+                QMessageBox.warning(self, 'Diagnóstico', 'Não foi possível salvar o relatório nesta pasta.')
+
+    def test_pdf_export(self):
+        from cadastro_pcm.core.pdf_recovery import synthetic_export_test
+        def done(result):
+            dialog = QDialog(self); dialog.setWindowTitle('Teste de exportação PDF'); dialog.resize(760, 540)
+            layout = QVBoxLayout(dialog)
+            layout.addWidget(label('Teste sintético aprovado pelo Excel.' if result['ok'] else
+                                   'Teste não aprovado. Consulte a etapa e os códigos no relatório.'))
+            text = QTextEdit(); text.setReadOnly(True)
+            content = json.dumps(result['report'], ensure_ascii=False, indent=2)
+            text.setPlainText(content); layout.addWidget(text)
+            layout.addWidget(button('Salvar relatório…', lambda: self.save_pdf_report(result['report'])))
+            layout.addWidget(button('Copiar diagnóstico', lambda: QApplication.clipboard().setText(content)))
+            layout.addWidget(button('Fechar', dialog.accept)); dialog.exec()
+        self.run_job(synthetic_export_test, done)
+
+    def export_existing_excel(self):
+        from cadastro_pcm.core.pdf_recovery import existing_workbook, export_existing
+        path = QFileDialog.getOpenFileName(self, 'Selecionar cadastro.xlsx gerado pelo aplicativo', '', 'Excel (*.xlsx)')[0]
+        if not path: return
+        try:
+            info = existing_workbook(path)
+            dialog = QDialog(self); dialog.setWindowTitle('Conferir nova versão para exportação')
+            layout = QVBoxLayout(dialog)
+            layout.addWidget(label('Confirme a aba e confira o Excel antes de exportar. Alterações manuais constituem uma nova versão; o original será preservado.'))
+            sheet = QComboBox(); sheet.addItems(list(info['sheets'])); layout.addWidget(sheet)
+            buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject); layout.addWidget(buttons)
+            if dialog.exec() != QDialog.Accepted: return
+            selected_sheet = sheet.currentText()
+            destination = QFileDialog.getSaveFileName(self, 'Salvar novo PDF', str(Path(path).with_name('cadastro_reexportado.pdf')), 'PDF (*.pdf)')[0]
+            if not destination: return
+            if not destination.lower().endswith('.pdf'): destination += '.pdf'
+            def task():
+                return export_existing(path, destination, selected_sheet, info['sha256'], self.settings.expected_pages)
+            def done(result):
+                self.job_message = 'PDF reexportado e validado.'
+                if QMessageBox.question(self, 'PDF validado', f'{result}\nDeseja visualizar para conferir o formulário antes de imprimir?') == QMessageBox.Yes:
+                    self.preview(result)
+            self.run_job(task, done)
+        except Exception as exc:
+            QMessageBox.warning(self, 'Excel existente', str(exc))
 
     def configure(self):
         dialog = QDialog(self); dialog.setWindowTitle('Configurações'); dialog.resize(780, 720)
@@ -685,7 +747,7 @@ class Window(QMainWindow):
                 if error:
                     self.last_error = error
                     self.date_diagnostic = diagnostic
-                    self.error_dialog('PDF não gerado — Excel preservado', error)
+                    self.error_dialog('PDF não aprovado — Excel preservado', error)
                     return
                 self.job_message = f'Geração concluída · {folder}'
                 QMessageBox.information(self, 'Arquivos gerados', f'{folder}\n' + ('Confira visualmente o PDF antes de imprimir: texto, Tipo e assinaturas.' if pdf else 'Excel e registro JSON salvos.'))
@@ -799,9 +861,28 @@ class Window(QMainWindow):
         actions.addWidget(button('Abrir pasta do lote', lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder.resolve())))))
         retry = button('Tentar novamente os itens com falha', dialog.accept)
         retry.setEnabled(bool(failed)); actions.addWidget(retry)
+        pdf_retry = button('Tentar novamente somente PDFs', lambda: dialog.done(2))
+        pdf_retry.setEnabled(any(r.folder and (r.folder / 'cadastro.xlsx').is_file() for r in failed))
+        actions.addWidget(pdf_retry)
+        layout.addLayout(actions)
+        actions = QHBoxLayout()
+        def save_diagnostics():
+            reports = [r.diagnostic['content'] for r in results if r.diagnostic]
+            self.save_pdf_report({'reports': reports})
+        save = button('Salvar diagnósticos do lote…', save_diagnostics)
+        save.setEnabled(any(r.diagnostic for r in results)); actions.addWidget(save)
         actions.addWidget(button('Fechar', dialog.reject)); layout.addLayout(actions)
-        if dialog.exec() == QDialog.Accepted:
+        choice = dialog.exec()
+        if choice == QDialog.Accepted:
             self.start_batch([r.row for r in failed], folder, settings)
+        elif choice == 2:
+            from cadastro_pcm.core.generation import retry_batch_pdfs
+            def task():
+                return folder, retry_batch_pdfs(results, settings, self.worker.progress.emit)
+            def done(result):
+                self._batch_summary = (*result, settings)
+                self.job_message = 'Nova tentativa dos PDFs concluída.'
+            self.run_job(task, done)
 
     def retry_export(self):
         try:
@@ -827,15 +908,15 @@ class Window(QMainWindow):
 
     def pdf_path(self):
         row, _ = self.selected(); path = self.outputs.get(row, Path('/__ausente__')) / 'cadastro.pdf'
-        if not path.is_file(): raise ValueError('Gere o PDF deste item antes de continuar.')
+        if not usable_pdf(path): raise ValueError('Gere e valide o PDF deste item antes de continuar.')
         return path
 
-    def preview(self):
+    def preview(self, path=None):
         try:
             from PySide6.QtPdf import QPdfDocument
             from PySide6.QtPdfWidgets import QPdfView
             dialog = QDialog(self); dialog.setWindowTitle('Visualizar PDF — confira cortes e campos manuais'); dialog.resize(850, 900)
-            layout = QVBoxLayout(dialog); doc = QPdfDocument(dialog); doc.load(str(self.pdf_path()))
+            layout = QVBoxLayout(dialog); doc = QPdfDocument(dialog); doc.load(str(path or self.pdf_path()))
             view = QPdfView(dialog); view.setDocument(doc); view.setPageMode(QPdfView.PageMode.MultiPage); layout.addWidget(view)
             dialog.exec()
         except Exception as exc: QMessageBox.warning(self, 'PDF', str(exc))

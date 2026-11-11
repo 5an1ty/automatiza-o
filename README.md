@@ -130,7 +130,7 @@ confira o relatório, o modelo e o PDF antes de autorizar a versão real.
 O PDF deve existir, conter o nome do item, a data brasileira e os textos das
 células preenchidas/institucionais da aba, ter o número esperado de páginas e
 não ter páginas sem texto. A exportação também confere A4 vertical, limites de
-texto e fonte mínima de 5 pontos; não certifica imagens nem aceitação visual. PDFs inválidos são removidos. Quando a exportação falha
+texto e fonte mínima de 5 pontos; não certifica imagens nem aceitação visual. PDFs reprovados ficam em diagnóstico local, fora do caminho de impressão; consulte a seção de diagnóstico PDF. Quando a exportação falha
 após a geração do Excel, a mensagem indica onde o Excel e registro JSON ficaram.
 Use **Exportar PDF do Excel salvo** para tentar novamente sem preencher outra
 cópia nem reprocessar a cotação. A instância COM é encerrada em sucesso e erro; não se encerram processos Excel
@@ -759,3 +759,81 @@ As janelas de confirmação e resultado foram exercitadas com 1, 10, 39 e 100 it
 rolagem e botões visíveis, incluindo uma área útil simulada de 640×480. A janela com
 100 itens também foi inspecionada visualmente em modo offscreen. Os testes de
 PDF/COM continuam usando simulações; não houve validação de Excel real nesta entrega.
+
+## Exportação PDF: diagnóstico por etapa e recuperação
+
+A falha atual do Windows precisa ser confirmada pelo relatório da instalação real.
+Os testes Linux não estabelecem a causa de uma falha de COM, impressora/paginação
+ou do modelo corporativo no computador do usuário.
+
+A exportação agora registra separadamente preparação dos arquivos, abertura do
+Excel, seleção da aba, apresentação da data, PageSetup, escala, chamada COM,
+existência/tamanho do PDF, validação e encerramento. O relatório inclui horário UTC,
+aba, área de impressão, parâmetros numéricos de PageSetup, páginas produzidas,
+códigos de falha e HRESULT/SCODE disponíveis. Não inclui nomes de materiais,
+conteúdo de células, caminhos pessoais nem mensagens COM brutas. O diagnóstico
+sanitizado de E8 é incluído quando a data impede prosseguir.
+
+Na cópia temporária, a seleção da aba substitui eventual agrupamento de abas e a
+planilha é calculada antes de preparar a impressão. A exportação continua sendo
+nativa, pela planilha via `ExportAsFixedFormat`, com caminho absoluto e área de
+impressão respeitada. A4, margens existentes e a barreira de legibilidade de 85%
+continuam válidos. Não se remove proteção nem se ajustam globalmente as dimensões
+do formulário; o modelo e o Excel salvo permanecem intactos. A seleção explícita
+previne exportação acidental de abas agrupadas, mas não comprova que essa tenha
+sido a causa das duas páginas observadas anteriormente.
+
+**PDF gerado, mas não aprovado na validação** significa que houve arquivo, mas
+paginação, conteúdo, data ou layout não passaram. O arquivo é preservado como
+`diagnostico_pdf/reprovado_<id>.pdf` na pasta da saída, acompanhado de relatório
+JSON. Esses PDFs podem conter documentos corporativos: mantenha-os locais e não
+os publique. Eles não aparecem como PDF aprovado na visualização/impressão do
+aplicativo. Um marcador `.pdf.pendente` também bloqueia a impressão caso o Windows
+impeça mover o arquivo reprovado. Falhas antes de criar o PDF e falhas ao encerrar
+o Excel recebem mensagens distintas. O relatório permanece disponível em memória
+para Salvar/Copiar mesmo se a gravação automática falhar.
+
+Para verificar a instalação sem documentos empresariais:
+
+1. Abra **Diagnóstico → Testar exportação PDF** no Windows.
+2. O aplicativo cria um Excel sintético, exporta com o Excel instalado, valida uma
+   página e remove os arquivos temporários tanto em sucesso quanto em erro.
+3. Use **Copiar diagnóstico** ou **Salvar relatório…**. Somente o relatório
+   sanitizado escolhido pelo usuário é preservado fora da pasta temporária.
+4. Se o teste passar, tente exportar o cadastro real e compare a etapa da falha.
+   O teste sintético não homologa o layout do formulário corporativo.
+
+Para recuperar arquivos de sessões anteriores, use **Gerar PDF a partir de Excel
+existente**. Selecione `cadastro.xlsx` junto do seu `registro.json`, confirme a aba
+validada e escolha um novo destino PDF. A identificação, Tipo vazio, data e área de
+impressão são conferidos; a exportação e a validação final são repetidas. O hash da
+versão escolhida impede exportar silenciosamente uma versão alterada após a
+conferência. Alterações manuais anteriores à seleção são uma nova versão a ser
+conferida pelo usuário; não exigem reimportar a cotação ou aprovar materiais outra
+vez. O registro local associa o arquivo ao fluxo do aplicativo, sem constituir
+certificação de autenticidade ou homologação visual. Não se sobrescreve um PDF
+existente: escolha outro nome ou mantenha a saída anterior fora do novo destino.
+
+No resumo do lote, **Tentar novamente somente PDFs** reutiliza os Excel salvos dos
+itens com erro, sem preencher novamente nem modificar cadastros bem-sucedidos.
+**Salvar diagnósticos do lote…** exporta os relatórios sanitizados disponíveis.
+As falhas individuais continuam permitindo os demais itens; se a própria chamada
+`Quit` falhar, o lote é interrompido explicitamente para evitar acumular instâncias
+Excel cuja liberação não pôde ser confirmada. Close, Quit e CoUninitialize são
+sempre tentados; uma falha de limpeza não esconde o erro original da operação.
+
+Depois de editar um Excel manualmente, gere outro PDF e confira cortes, logotipo,
+bordas, assinaturas, Tipo, data e legibilidade antes de imprimir. O PDF anterior
+não se atualiza automaticamente. Não foram introduzidas impressoras PDF virtuais,
+LibreOffice ou serviços externos.
+
+Validação desta entrega: **232 testes passaram**, nenhum falhou, em Python 3.12/Linux
+com Qt offscreen. As simulações incluem exportação de aba específica, caminhos com
+espaços, PageSetup, uma/duas páginas, PDF vazio ou ausente, conteúdo ausente, HRESULT,
+permissões, destino existente/bloqueado, quarentena impedida, limpeza COM e
+preservação de erro primário, reexportação de versão manual, teste sintético,
+relatórios sem conteúdo corporativo e nova tentativa dos PDFs do lote.
+**Microsoft Excel real não está disponível neste ambiente.** A causa atual no
+Windows e a paginação/aceitação visual do modelo real permanecem pendentes do teste
+local e do relatório copiado pelo usuário; não se declara correção definitiva com
+base nestes testes simulados.

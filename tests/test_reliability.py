@@ -75,7 +75,7 @@ def test_pdf_additional_blank_and_missing_name(tmp_path):
     with pytest.raises(ValueError, match='Nome'): pdf_exporter.validate_pdf(path, 'Gaxeta 16')
 
 
-def test_pdf_export_failure_cleans_partial(monkeypatch, tmp_path):
+def test_pdf_export_failure_quarantines_partial(monkeypatch, tmp_path):
     template = tmp_path/'modelo.xlsx'; wb = Workbook(); ws = wb.active; ws.title='Criação de Material Nacional'; ws['A33']='Controle'; wb.save(template)
     output = tmp_path/'saida.pdf'
     class FakeSheet:
@@ -91,9 +91,12 @@ def test_pdf_export_failure_cleans_partial(monkeypatch, tmp_path):
     monkeypatch.setattr(pdf_exporter, 'excel_session', fake_session)
     monkeypatch.setattr(pdf_exporter.sys, 'platform', 'win32')
     before = template.read_bytes()
-    with pytest.raises(RuntimeError, match='simulada'):
+    from cadastro_pcm.core.pdf_diagnostics import PdfExportError
+    with pytest.raises(PdfExportError, match='simulada') as failure:
         pdf_exporter.export_pdf(template, output, ws.title, 'Gaxeta')
     assert not output.exists() and template.read_bytes() == before
+    assert failure.value.report['failure_stage'] == 'exportar_com'
+    assert list((tmp_path / 'diagnostico_pdf').glob('reprovado_*.pdf'))
 
 
 def test_settings_persistence(monkeypatch, tmp_path):

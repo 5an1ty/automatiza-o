@@ -7,7 +7,8 @@ import logging
 from .excel_writer import write_excel, check_template
 from .pdf_exporter import export_pdf
 from .file_manager import new_output
-from .excel_date import date_error_payload
+from .pdf_diagnostics import diagnostic_payload as date_error_payload
+from .pdf_diagnostics import PdfExportError, unsafe_cleanup
 
 
 def generate_documents(item, settings, pdf=True, *, writer=None, exporter=None, folder=None):
@@ -30,8 +31,12 @@ def generate_documents(item, settings, pdf=True, *, writer=None, exporter=None, 
             if not (folder / 'cadastro.pdf').is_file():
                 raise RuntimeError('O arquivo PDF não foi criado.')
         except Exception as exc:
-            logging.exception('Falha na exportação PDF')
-            error = f'O Excel e o registro foram salvos em {folder}. O PDF não foi gerado: {exc}. Use Exportar PDF do Excel salvo para tentar novamente.'
+            if isinstance(exc, PdfExportError):
+                logging.error('Falha PDF na etapa %s', exc.report.get('failure_stage'))
+            else:
+                logging.error('Falha na exportação PDF: %s', type(exc).__name__)
+            outcome = str(exc) if isinstance(exc, PdfExportError) else f'O PDF não foi gerado: {exc}'
+            error = f'O Excel e o registro foram salvos em {folder}. {outcome}. Use Exportar PDF do Excel salvo para tentar novamente.'
             diagnostic = date_error_payload(exc)
     return folder, error, diagnostic
 
@@ -79,4 +84,32 @@ def generate_batch(entries, settings, progress=lambda *args: None, root=None):
             logging.exception('Falha no item %s do lote', row + 1)
             result = BatchResult(row, item, 'erro', str(exc), folder, date_error_payload(exc))
         results.append(result)
+        if unsafe_cleanup(result.diagnostic):
+            processed = {r.row for r in results}
+            results.extend(BatchResult(r, i, 'ignorado', 'Lote interrompido: não foi possível encerrar a instância Excel.')
+                           for r, i in entries if r not in processed)
+            break
     return root, results
+
+
+def retry_batch_pdfs(results, settings, progress=lambda *args: None):
+    """Retry saved workbooks only; never refill or replace successful documents."""
+    from .pdf_recovery import existing_workbook, export_existing
+    retried = []
+    failures = [r for r in results if r.status == 'erro' and r.folder and (r.folder / 'cadastro.xlsx').is_file()]
+    for position, result in enumerate(failures, 1):
+        progress(position, len(failures), result.item.name)
+        try:
+            source = result.folder / 'cadastro.xlsx'
+            info = existing_workbook(source)
+            export_existing(source, result.folder / 'cadastro.pdf', settings.sheet, info['sha256'], settings.expected_pages)
+            retried.append(BatchResult(result.row, result.item, 'sucesso', folder=result.folder))
+        except Exception as exc:
+            payload = date_error_payload(exc)
+            retried.append(BatchResult(result.row, result.item, 'erro', str(exc), result.folder, payload))
+            if unsafe_cleanup(payload):
+                remaining = failures[position:]
+                retried.extend(BatchResult(r.row, r.item, 'erro', 'Nova tentativa interrompida: Excel não encerrado.', r.folder)
+                               for r in remaining)
+                break
+    return retried
