@@ -251,12 +251,14 @@ def test_gui_review_approval_and_excel_generation(gui):
     wb.close(); editor.deleteLater()
 
 
-def test_gui_incomplete_approval_and_model_blockers(gui):
+def test_gui_incomplete_approval_and_model_blockers(gui, monkeypatch):
     app, window, messages = gui
     item = complete_item(); item.unit_price = None; item.ncm = ''; item.approved = False
+    details = []
+    monkeypatch.setattr(main_window.ApprovalDialog, 'exec', lambda dialog: details.append(dialog.details.item(0).text()) or 0)
     editor = main_window.Editor(item, window); editor.confirm.setChecked(True); editor.save(item)
     assert editor.result() != QDialog.Accepted
-    assert 'Preço unitário' in messages[-1][1] and 'NCM' in messages[-1][1]
+    assert 'Preço unitário' in details[0] and 'NCM' in details[0]
     window.items = [item]; window.refresh()
     assert not window.excel_button.isEnabled()
     assert 'Preço unitário' in window.generation_hint.text() and 'NCM' in window.generation_hint.text()

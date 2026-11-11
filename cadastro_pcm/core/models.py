@@ -40,6 +40,7 @@ class Item(BaseModel):
     area: str = 'MANUTENÇÃO'
     request_date: date = Field(default_factory=date.today)
     price_fill_later: bool = False
+    authorized_pending_fields: list[Literal['unit_price', 'ncm']] = Field(default_factory=list)
     approved: bool = False
     evidence: dict[str, Evidence] = Field(default_factory=dict)
 
@@ -53,21 +54,40 @@ class Item(BaseModel):
         digits = value.replace('.', '')
         return f'{digits[:4]}.{digits[4:6]}.{digits[6:]}'
 
-    def pending_fields(self):
+    def structural_pending_fields(self):
         missing = []
         if not self.name.strip(): missing.append('Nome do material')
         elif commercial_line(self.name.strip().splitlines()[0]):
             missing.append('Identificação do material (o nome informado é uma condição comercial)')
         if not self.requester.strip(): missing.append('Requisitante')
-        if self.unit_price is None and not self.price_fill_later: missing.append('Preço unitário confirmado')
-        if not self.ncm and not self.ncm_not_applicable:
-            missing.append('NCM fiscal (informe o código ou confirme que não se aplica no editor)')
         return missing
+
+    def deferred_pending_fields(self):
+        missing = {}
+        if self.unit_price is None and not self.price_fill_later:
+            missing['unit_price'] = 'Preço unitário confirmado'
+        if not self.ncm and not self.ncm_not_applicable:
+            missing['ncm'] = 'NCM fiscal (não informado; preenchimento posterior)'
+        return missing
+
+    def pending_fields(self):
+        return self.structural_pending_fields() + list(self.deferred_pending_fields().values())
+
+    def blocking_fields(self):
+        return self.structural_pending_fields() + [reason for field, reason in self.deferred_pending_fields().items()
+                                                   if field not in self.authorized_pending_fields]
+
+    def approve(self, allow_incomplete=False):
+        missing = self.structural_pending_fields() if allow_incomplete else self.pending_fields()
+        if missing:
+            raise ValueError('Campos pendentes: ' + '; '.join(missing) + '.')
+        self.authorized_pending_fields = list(self.deferred_pending_fields()) if allow_incomplete else []
+        self.approved = True
 
     def require_ready(self):
         if not self.approved:
             raise ValueError('Revise e aprove o item antes de gerar.')
-        if missing := self.pending_fields():
+        if missing := self.blocking_fields():
             raise ValueError('Campos pendentes: ' + '; '.join(missing) + '.')
 
 

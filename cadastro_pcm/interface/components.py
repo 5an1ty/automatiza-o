@@ -34,6 +34,8 @@ def button(text, handler, primary=False):
 
 
 def item_status(item):
+    if item.approved and item.pending_fields() and not item.blocking_fields():
+        return 'Aprovado com pendências', 'warning'
     if item.pending_fields():
         return 'Incompleto', 'warning'
     if item.price_fill_later:

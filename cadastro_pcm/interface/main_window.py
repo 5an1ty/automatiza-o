@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QDialogButtonBox, QLabel, QComboBox, QSplitter, QHeaderView, QProgressBar, QTabWidget, QListWidgetItem, QApplication)
 from .theme import QSS
 from .components import label, badge, card, button, item_status
+from .approval_dialog import ApprovalDialog
 from cadastro_pcm.core.models import Item, Evidence, decimal_br, money_br
 from cadastro_pcm.core.settings import load_settings, save_settings
 from cadastro_pcm.core.pdf_reader import read_pdf
@@ -138,10 +139,21 @@ class Editor(QDialog):
                 data[key] = value
             data['price_fill_later'] = self.price_later.isChecked()
             data['ncm_not_applicable'] = self.ncm_na.isChecked()
-            data['approved'] = self.confirm.isChecked()
+            data['approved'] = False
+            data['authorized_pending_fields'] = []
             self.result_item = Item.model_validate(data)
-            if self.result_item.approved:
-                self.result_item.require_ready()
+            if self.confirm.isChecked():
+                if self.result_item.pending_fields():
+                    dialog = ApprovalDialog([self.result_item], self)
+                    choice = dialog.exec()
+                    if choice == QDialog.Rejected:
+                        return
+                    if choice == ApprovalDialog.ALLOW_INCOMPLETE:
+                        self.result_item.approve(True)
+                    elif not self.result_item.pending_fields():
+                        self.result_item.approve()
+                else:
+                    self.result_item.approve()
             self.accept()
         except Exception as exc:
             QMessageBox.warning(self, 'Dados inválidos', str(exc))
@@ -191,11 +203,17 @@ class Window(QMainWindow):
         self.select_all_button = button('Selecionar todos', self.toggle_all_items)
         self.select_all_button.setToolTip('Seleciona ou desmarca somente os materiais visíveis na tabela; não altera dados nem aprovações.')
         self.approve_selected_button = button('Aprovar selecionados', self.approve_selected)
-        review_header.addWidget(self.select_all_button)
-        review_header.addWidget(self.approve_selected_button)
+        self.approve_selected_button.setToolTip('Use Selecionar todos para aprovar todos os materiais visíveis.')
+        review_selection = QHBoxLayout()
+        review_selection.addWidget(self.select_all_button)
+        review_selection.addWidget(self.approve_selected_button)
+        self.approve_all_button = button('Aprovar todos', lambda: self.approve_rows(self.visible_rows()))
+        self.approve_all_button.setToolTip('Revisa a aprovação de todos os materiais visíveis, sem alterar a seleção.')
+        review_selection.addWidget(self.approve_all_button); review_selection.addStretch()
         review_header.addWidget(button('Adicionar item manual', self.add_item))
         self.process_button = button('Processar PDFs', self.process, True)
         review_header.addWidget(self.process_button); layout.addLayout(review_header)
+        layout.addLayout(review_selection)
         split = QSplitter(Qt.Horizontal)
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(['Material', 'Preço unitário', 'NCM', 'Origem', 'Validação'])
@@ -401,6 +419,7 @@ class Window(QMainWindow):
         self.select_all_button.setEnabled(bool(visible))
         self.select_all_button.setText('Desmarcar todos' if visible and set(visible).issubset(selected_rows) else 'Selecionar todos')
         self.approve_selected_button.setEnabled(bool(selected_rows))
+        self.approve_all_button.setEnabled(bool(visible))
         self.selected_batch_button.setEnabled(bool(model and sys.platform == 'win32' and
             any(not eligibility(self.items[r]) for r in selected_rows)))
         self.batch_button.setToolTip('Gera Excel e PDF separados. PDF requer Windows e Microsoft Excel.')
@@ -411,7 +430,7 @@ class Window(QMainWindow):
             reasons.append('Selecione um material para gerar.')
         else:
             item = self.items[row]
-            reasons.extend('Pendente: ' + field + '.' for field in item.pending_fields())
+            reasons.extend('Pendente: ' + field + '.' for field in item.blocking_fields())
             if not item.approved: reasons.append('Abra Editar e revisar item e marque a aprovação humana.')
         if not self.settings.template:
             reasons.append('Modelo não configurado: selecione o Excel oficial nas Configurações.')
@@ -464,7 +483,10 @@ class Window(QMainWindow):
                 if evidence.estimated: lines.append('Estimativa — requer aprovação humana')
             lines.extend(item.warnings)
             lines.extend(['', 'OBSERVAÇÕES', 'Tipo e assinaturas permanecem vazios.'])
-            if not item.ncm: lines.append('NCM fiscal: não aplicável confirmado.' if item.ncm_not_applicable else 'NCM fiscal pendente: confira a aplicabilidade antes de gerar.')
+            if not item.ncm: lines.append('NCM fiscal: não aplicável confirmado.' if item.ncm_not_applicable else 'NCM fiscal pendente: código não confirmado; preenchimento posterior requer autorização.')
+            if item.authorized_pending_fields or item.price_fill_later:
+                lines.extend(['', 'Pendências autorizadas: ' + ', '.join(item.authorized_pending_fields or ['preço a preencher']),
+                              'Após editar o Excel, exporte um novo PDF: o PDF anterior não é atualizado automaticamente.'])
             if not item.approved: lines.append('Revise as informações e aprove no editor.')
             if item.pending_fields(): lines.extend(['', 'CAMPOS PENDENTES', *item.pending_fields()])
             self.details.setPlainText('\n'.join(lines))
@@ -685,40 +707,29 @@ class Window(QMainWindow):
         self.update_details()
 
     def approve_selected(self):
-        rows = self.selected_rows()
+        self.approve_rows(self.selected_rows())
+
+    def approve_rows(self, rows):
+        selected_before = self.selected_rows()
         if not rows or self.worker is not None:
             return
-        eligible, pending = [], []
-        for row in rows:
-            item = self.items[row]
-            missing = item.pending_fields()
-            if missing:
-                pending.append(f'{item.name or "Sem nome"}: ' + '; '.join(missing))
-            else:
-                eligible.append(row)
-        deferred = sum(self.items[r].price_fill_later for r in eligible)
-        summary = (f'{len(rows)} materiais selecionados\n'
-                   f'{len(eligible) - deferred} com informações completas\n'
-                   f'{deferred} com preço a preencher no Excel\n'
-                   f'{len(eligible)} aptos para aprovação\n{len(pending)} com pendências')
-        if pending:
-            summary += '\n\nNão serão aprovados:\n' + '\n'.join(pending)
-        if not eligible:
-            QMessageBox.information(self, 'Aprovação em lote', summary)
+        entries = [self.items[r] for r in rows]
+        choice = ApprovalDialog(entries, self).exec()
+        if choice == QDialog.Rejected:
             return
-        if QMessageBox.question(self, 'Confirmar aprovação em lote', summary +
-                f'\n\nRevisei os dados e desejo aprovar os {len(eligible)} materiais aptos?') != QMessageBox.Yes:
-            return
-        for row in eligible:
-            self.items[row].approved = True
+        approved = 0
+        for item in entries:
+            try:
+                item.approve(choice == ApprovalDialog.ALLOW_INCOMPLETE)
+                approved += 1
+            except ValueError:
+                continue
         self.refresh()
         self.table.clearSelection()
-        for row in rows:
+        for row in selected_before:
             self.table.selectionModel().select(self.table.model().index(row, 0),
                 QItemSelectionModel.Select | QItemSelectionModel.Rows)
-        QMessageBox.information(self, 'Aprovação em lote',
-                                f'{len(eligible)} materiais aprovados.\n{len(pending)} não aprovados por pendências.' +
-                                ('\n\n' + '\n'.join(pending) if pending else ''))
+        ApprovalDialog(entries, self, result=True, approved_count=approved).exec()
 
     def selected_rows(self):
         return sorted({index.row() for index in self.table.selectionModel().selectedRows()

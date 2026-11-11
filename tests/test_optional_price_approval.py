@@ -158,10 +158,10 @@ def test_bulk_approval_confirmation_pending_and_deferred(gui, monkeypatch):
     window.items = items; window.refresh(); window.toggle_all_items()
     assert window.selected_rows() == [0, 1, 2, 3]
     captured = []
-    monkeypatch.setattr(QMessageBox, 'question', lambda *args: captured.append(args[-1]) or QMessageBox.No)
+    monkeypatch.setattr(main_window.ApprovalDialog, 'exec', lambda dialog: captured.append(dialog.details.item(2).text()) or 0)
     window.approve_selected(); assert not any(i.approved for i in items)
-    assert '2 aptos' in captured[0] and '1 com preço a preencher' in captured[0] and 'NCM' in captured[0]
-    monkeypatch.setattr(QMessageBox, 'question', lambda *args: QMessageBox.Yes)
+    assert 'NCM' in captured[0]
+    monkeypatch.setattr(main_window.ApprovalDialog, 'exec', lambda dialog: main_window.ApprovalDialog.COMPLETE_ONLY)
     window.approve_selected()
     assert [i.approved for i in items] == [True, True, False, False]
     assert window.selected_rows() == [0, 1, 2, 3]
@@ -173,7 +173,7 @@ def test_bulk_approval_only_selected(gui, monkeypatch):
     _, window = gui
     window.items = [approved().model_copy(update={'approved': False}) for _ in range(3)]
     window.refresh(); window.table.selectRow(1)
-    monkeypatch.setattr(QMessageBox, 'question', lambda *args: QMessageBox.Yes)
+    monkeypatch.setattr(main_window.ApprovalDialog, 'exec', lambda dialog: main_window.ApprovalDialog.COMPLETE_ONLY)
     window.approve_selected()
     assert [i.approved for i in window.items] == [False, True, False]
 

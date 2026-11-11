@@ -80,8 +80,8 @@ calculadas/dinâmicas e validações personalizadas são bloqueadas conservadora
    **Registrar pesquisa** para informar valor, URL e eventual estimativa. O programa
    pede confirmação antes de substituir; a aprovação do item é invalidada.
 7. Revise dados e fontes e marque a aprovação. Nome e requisitante são obrigatórios; o preço unitário
-   confirmado também, salvo autorização individual de preenchimento posterior no Excel. NCM ausente bloqueia a aprovação até que o código seja informado ou o
-   responsável marque explicitamente que ele não se aplica no editor. Oito dígitos válidos não comprovam classificação fiscal correta.
+   confirmado também, salvo autorização individual de preenchimento posterior no Excel. NCM ausente exige informar o código, confirmar que não se aplica ou
+   autorizar explicitamente a aprovação com essa pendência para preenchimento posterior. Oito dígitos válidos não comprovam classificação fiscal correta.
 8. Gere Excel ou Excel + PDF para o item selecionado. Cada operação cria uma pasta
    exclusiva `NOME_identificador/cadastro.xlsx`, `registro.json` e, quando solicitado,
    `cadastro.pdf`. O JSON registra dados e evidências. Não há sobrescrita de saídas.
@@ -639,13 +639,14 @@ a instalação real do Excel já foi homologada.
 
 No Windows com Microsoft Excel instalado, revise cada item e marque sua aprovação
 humana no editor. Em **Gerar documentos**, clique em **Gerar todos os aprovados (N)**.
-O contador considera somente itens explicitamente aprovados e sem campos pendentes.
+O contador considera itens explicitamente aprovados, sem bloqueios estruturais
+ou pendências que não tenham sido autorizadas para preenchimento posterior.
 A configuração e a autorização do modelo continuam obrigatórias; a compatibilidade
 de cada item com a aba e suas validações é conferida durante o processamento.
 
 Para gerar parte da lista, selecione linhas com Ctrl/clique ou Shift/clique e use
 **Gerar selecionados**. Confirme a quantidade antes de iniciar. Itens sem aprovação
-ou com pendências são ignorados e aparecem no resumo com o motivo. A aprovação não
+ou com pendências não autorizadas são ignorados e aparecem no resumo com o motivo. A aprovação não
 é concedida automaticamente. Os botões de geração individual continuam disponíveis.
 
 A geração ocorre em segundo plano, sequencialmente, com progresso por material.
@@ -681,7 +682,7 @@ Em **Editar e revisar item**, ao lado do preço, marque **Preencher preço poste
 no Excel** somente para os materiais em que deseja omitir o valor. A opção começa
 desmarcada e é individual. O aviso informa que Valor Material ficará vazio no Excel
 e no PDF; a tabela identifica esses materiais como **Preço a preencher**. Desmarque
-a opção para informar o preço normalmente. Sem preço e sem essa autorização, o
+a opção para informar o preço normalmente. Sem preço e sem autorização individual ou aprovação explícita com pendências, o
 item continua bloqueado. Nenhum valor zero é criado para substituir um preço ausente.
 
 A autorização fica no campo `price_fill_later` do registro JSON de cada material.
@@ -694,13 +695,14 @@ Na revisão, **Selecionar todos** seleciona os materiais visíveis; o mesmo bot�
 a **Desmarcar todos**. Ctrl/clique e Shift/clique continuam permitindo seleção parcial.
 A seleção não altera dados nem aprovações. **Aprovar selecionados** apresenta os totais
 de itens completos, preços a preencher autorizados e pendências, incluindo os motivos
-por material. Só os itens aptos recebem aprovação após confirmação humana explícita.
+por material. Só os itens aptos recebem aprovação após confirmação humana explícita;
+preço e NCM ausentes podem ser autorizados no novo diálogo descrito abaixo.
 A ação não concede autorização de omitir preço a nenhum item.
 
 Para gerar dez materiais, revise os dados, autorize individualmente os preços que
 ficarão em branco, selecione os itens e confirme **Aprovar selecionados**. Em seguida,
-use **Gerar todos os aprovados** ou **Gerar selecionados**. Os materiais com outras
-pendências permanecem bloqueados. A revisão e a aprovação individual continuam
+use **Gerar todos os aprovados** ou **Gerar selecionados**. Os materiais com bloqueios estruturais ou pendências não autorizadas
+permanecem bloqueados. A revisão e a aprovação individual continuam
 disponíveis; salvar uma revisão sem marcar a aprovação a revoga. Alterar um campo
 depois de marcar a confirmação no editor também desmarca essa confirmação.
 
@@ -712,3 +714,48 @@ Validação desta atualização: **192 testes passaram**, nenhum falhou, em Pyth
 com Qt offscreen. Inclui preço opcional, A20 vazio nos dois backends de escrita
 (COM simulado), PDF com preço vazio (exportação nativa simulada), seleção, confirmação
 de aprovação em lote, pendências, revogação após edição e os testes anteriores.
+
+## Aprovar com pendências e revisar listas longas
+
+Use **Aprovar selecionados** ou **Aprovar todos** (todos os materiais visíveis).
+A nova janela tem resumo fixo, lista central rolável e rodapé fixo, sem mensagens
+com centenas de linhas. Seu tamanho é limitado à área útil do monitor. A lista
+mostra o nome, a situação de aprovação e as pendências por material; os botões
+continuam acessíveis ao rolar 39, 100 ou mais registros.
+
+Quando houver pendências, escolha explicitamente:
+
+- **Sim, aprovar incompletos**: autoriza os campos preço e/ou NCM fiscal atualmente
+  ausentes em cada item. Os materiais recebem **Aprovado com pendências** e podem
+  ser gerados individualmente ou em lote. Isso não confirma os dados ausentes.
+- **Não, somente completos**: aprova apenas os elegíveis sem pendências não
+  autorizadas. Não concede novas autorizações aos incompletos.
+- **Cancelar**: não altera os materiais.
+
+A mesma janela aparece ao marcar a aprovação individual e salvar uma revisão
+com campos pendentes. É possível salvar a revisão sem aprovação. Reabrir e editar
+continua exigindo nova confirmação; a edição não reaproveita autorizações antigas.
+A falta de nome/identificação ou de requisitante continua bloqueada. Fórmulas,
+proteção, dados incompatíveis com o modelo e falhas de integridade continuam
+sujeitos às validações existentes e não são dispensados pela aprovação humana.
+
+O registro JSON contém `authorized_pending_fields`, com `unit_price` e/ou `ncm`
+somente quando explicitamente autorizados. Registros antigos assumem lista vazia.
+A autorização de um campo não dispensa outra pendência que surja depois. A opção
+individual `price_fill_later` permanece disponível e compatível.
+
+Preço ausente permanece vazio em A20, nunca zero; NCM fiscal ausente não adiciona
+código à descrição nem marca automaticamente não aplicabilidade. A descrição
+informada é preservada. O NCM inferior (E22, normalmente SIM) é um campo separado
+e não é um código fiscal. Tipo, assinaturas, proteção e modelo original seguem
+as regras existentes. Após preencher o Excel manualmente, exporte outro PDF: o
+PDF já gerado não se atualiza automaticamente. Esse lembrete aparece na aprovação
+e nos detalhes dos materiais com pendências autorizadas.
+
+Validação desta entrega: **214 testes passaram**, nenhum falhou, em Python 3.12/Linux
+com Qt offscreen. Inclui escolhas Sim/Não/Cancelar, aprovação individual, autorizações
+por campo, proteção dos campos corporativos e geração em lote com preço/NCM ausentes.
+As janelas de confirmação e resultado foram exercitadas com 1, 10, 39 e 100 itens,
+rolagem e botões visíveis, incluindo uma área útil simulada de 640×480. A janela com
+100 itens também foi inspecionada visualmente em modo offscreen. Os testes de
+PDF/COM continuam usando simulações; não houve validação de Excel real nesta entrega.
