@@ -349,6 +349,6 @@ def test_pdf_retry_uses_saved_excel_without_reprocessing(gui, monkeypatch):
     window.settings.sheet = 'configuração posterior'
     window.retry_button.click(); wait_job(app, window)
     assert calls == [(workbook, 'Criação de Material Nacional', 'Parafuso M8', 1)]
-    assert workbook.read_bytes() == before and (folder / 'Parafuso M8.pdf').is_file()
+    assert workbook.read_bytes() == before and main_window.material_pdf(folder).is_file()
     assert window.preview_button.isEnabled() and not window.retry_button.isEnabled()
     assert 'PDF exportado' in window.status.text()

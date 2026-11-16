@@ -6,12 +6,12 @@ import logging
 
 from .excel_writer import write_excel, check_template
 from .pdf_exporter import export_pdf
-from .file_manager import new_output, material_pdf
+from .file_manager import new_output, material_pdf, export_central_pdf
 from .pdf_diagnostics import diagnostic_payload as date_error_payload
 from .pdf_diagnostics import PdfExportError, unsafe_cleanup
 
 
-def generate_documents(item, settings, pdf=True, *, writer=None, exporter=None, folder=None):
+def generate_documents(item, settings, pdf=True, *, writer=None, exporter=None, folder=None, pdf_output=None):
     writer = writer or write_excel
     exporter = exporter or export_pdf
     item.require_ready()
@@ -27,10 +27,8 @@ def generate_documents(item, settings, pdf=True, *, writer=None, exporter=None, 
     error, diagnostic = '', None
     if pdf:
         try:
-            destination = material_pdf(folder, item.name, new=True)
-            exporter(xlsx, destination, settings.sheet, item.name, settings.expected_pages)
-            if not destination.is_file():
-                raise RuntimeError('O arquivo PDF não foi criado.')
+            export_central_pdf(xlsx, folder, pdf_output or settings.output, settings.sheet,
+                               item.name, settings.expected_pages, exporter=exporter)
         except Exception as exc:
             if isinstance(exc, PdfExportError):
                 logging.error('Falha PDF na etapa %s', exc.report.get('failure_stage'))
@@ -79,7 +77,7 @@ def generate_batch(entries, settings, progress=lambda *args: None, root=None):
         try:
             check_template(local.template, item, local.sheet, local.authorized_template_sha256)
             folder = new_output(root, item.name)
-            folder, error, diagnostic = generate_documents(item, local, True, folder=folder)
+            folder, error, diagnostic = generate_documents(item, local, True, folder=folder, pdf_output=settings.output)
             result = BatchResult(row, item, 'erro' if error else 'sucesso', error, folder, diagnostic)
         except Exception as exc:
             logging.exception('Falha no item %s do lote', row + 1)
@@ -103,7 +101,10 @@ def retry_batch_pdfs(results, settings, progress=lambda *args: None):
         try:
             source = result.folder / 'cadastro.xlsx'
             info = existing_workbook(source)
-            export_existing(source, material_pdf(result.folder, new=True), settings.sheet, info['sha256'], settings.expected_pages)
+            def exporter(workbook, destination, sheet, name, pages):
+                return export_existing(workbook, destination, sheet, info['sha256'], pages)
+            export_central_pdf(source, result.folder, settings.output, settings.sheet,
+                               result.item.name, settings.expected_pages, exporter=exporter)
             retried.append(BatchResult(result.row, result.item, 'sucesso', folder=result.folder))
         except Exception as exc:
             payload = date_error_payload(exc)

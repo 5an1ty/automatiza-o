@@ -15,6 +15,7 @@ class Evidence(BaseModel):
 
 
 class Item(BaseModel):
+    pdf_path: str = ''
     name: str = ''
     description: str = ''
     quantity: Decimal | None = Field(default=None, gt=0)

@@ -1,4 +1,4 @@
-from cadastro_pcm.core.file_manager import material_pdf
+from cadastro_pcm.core.file_manager import material_pdf, export_central_pdf
 import json
 import logging
 import os
@@ -672,11 +672,12 @@ class Window(QMainWindow):
             buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject); layout.addWidget(buttons)
             if dialog.exec() != QDialog.Accepted: return
             selected_sheet = sheet.currentText()
-            destination = QFileDialog.getSaveFileName(self, 'Salvar novo PDF', str(material_pdf(Path(path).parent, new=True)), 'PDF (*.pdf)')[0]
-            if not destination: return
-            if not destination.lower().endswith('.pdf'): destination += '.pdf'
             def task():
-                return export_existing(path, destination, selected_sheet, info['sha256'], self.settings.expected_pages)
+                def exporter(workbook, destination, chosen_sheet, name, pages):
+                    return export_existing(workbook, destination, chosen_sheet, info['sha256'], pages)
+                return export_central_pdf(path, Path(path).parent, self.settings.output,
+                                          selected_sheet, info['sheets'][selected_sheet],
+                                          self.settings.expected_pages, exporter=exporter)
             def done(result):
                 self.job_message = 'PDF reexportado e validado.'
                 if QMessageBox.question(self, 'PDF validado', f'{result}\nDeseja visualizar para conferir o formulário antes de imprimir?') == QMessageBox.Yes:
@@ -904,18 +905,17 @@ class Window(QMainWindow):
             if folder is None or not (folder / 'cadastro.xlsx').is_file():
                 raise ValueError('Excel salvo não encontrado. Gere o Excel deste item primeiro.')
             sheet, name, pages = self.output_specs.get(row, (self.settings.sheet, item.name, self.settings.expected_pages))
-            destination = material_pdf(folder, name, new=True)
             def task():
                 try:
-                    export_pdf(folder / 'cadastro.xlsx', destination, sheet, name, pages)
-                    if not destination.is_file(): raise RuntimeError('PDF não criado.')
+                    export_central_pdf(folder / 'cadastro.xlsx', folder, self.settings.output,
+                                       sheet, name, pages, exporter=export_pdf)
                 except Exception as exc:
                     raise RuntimeError(f'Excel preservado em {folder}. Nova exportação falhou: {exc}') from exc
                 return folder
             def done(result):
-                self.job_message = f'PDF exportado · {destination}'
+                self.job_message = f'PDF exportado · {material_pdf(result)}'
                 self.update_actions()
-                QMessageBox.information(self, 'PDF exportado', f'{destination}\nConfira legibilidade, logotipo, Tipo e assinaturas antes de imprimir.')
+                QMessageBox.information(self, 'PDF exportado', f'{material_pdf(result)}\nConfira legibilidade, logotipo, Tipo e assinaturas antes de imprimir.')
             self.run_job(task, done)
         except Exception as exc:
             QMessageBox.warning(self, 'Exportar PDF', str(exc))
@@ -946,7 +946,7 @@ class Window(QMainWindow):
         except Exception as exc: QMessageBox.warning(self, 'Impressão', str(exc))
 
     def open_output(self):
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.outputs.get(self.selected()[0], Path(self.settings.output)).resolve())))
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(self.settings.output).resolve())))
 
     def closeEvent(self, event):
         if self.worker is not None:

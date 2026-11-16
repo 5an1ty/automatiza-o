@@ -276,7 +276,7 @@ def test_blank_page_remains_blocking(native, tmp_path):
 
 
 def test_material_names_collision_and_saved_preview(template, tmp_path, monkeypatch):
-    from cadastro_pcm.core.file_manager import material_pdf, safe_name
+    from cadastro_pcm.core.file_manager import material_pdf, safe_name, export_central_pdf
     from cadastro_pcm.interface import main_window
     from PySide6.QtWidgets import QApplication
     monkeypatch.setenv('QT_QPA_PLATFORM', 'offscreen')
@@ -294,11 +294,11 @@ def test_material_names_collision_and_saved_preview(template, tmp_path, monkeypa
     assert results[0].folder != results[1].folder
     for result in results:
         path = material_pdf(result.folder)
-        assert path.name == item.name + '.pdf' and path.parent == result.folder
+        assert path.name.startswith('cadastro_') and path.parent == tmp_path / 'lote pdf'
         previous = path.read_bytes()
-        next_path = material_pdf(result.folder, new=True)
-        assert next_path.name == item.name + ' (2).pdf'
-        export(None, next_path, None, item.name, 1)
+        next_path = export_central_pdf(result.folder / 'cadastro.xlsx', result.folder, tmp_path,
+                                       settings.sheet, item.name, 1, exporter=export)
+        assert next_path != path
         assert material_pdf(result.folder) == next_path and path.read_bytes() == previous
     window.items = [item]; window.refresh(); window.outputs[0] = results[0].folder
     window.update_actions()

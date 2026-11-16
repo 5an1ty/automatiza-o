@@ -84,7 +84,8 @@ calculadas/dinâmicas e validações personalizadas são bloqueadas conservadora
    autorizar explicitamente a aprovação com essa pendência para preenchimento posterior. Oito dígitos válidos não comprovam classificação fiscal correta.
 8. Gere Excel ou Excel + PDF para o item selecionado. Cada operação cria uma pasta
    exclusiva `NOME_identificador/cadastro.xlsx`, `registro.json` e, quando solicitado,
-   `NOME DO MATERIAL.pdf`. O JSON registra dados e evidências. Não há sobrescrita de saídas.
+   PDFs ficam em `lote pdf/cadastro_<identificador>.pdf` na saída configurada. O JSON
+   registra a associação, os dados e as evidências. Não há sobrescrita de saídas.
 9. Visualize o PDF; confira cortes, descrição longa, estrutura, Tipo e assinaturas.
    **Imprimir…** abre o visualizador do Windows; use Ctrl+P e confirme lá. Não é
    enviado nenhum trabalho automaticamente à impressora.
@@ -800,14 +801,14 @@ Para verificar a instalação sem documentos empresariais:
 
 Para recuperar arquivos de sessões anteriores, use **Gerar PDF a partir de Excel
 existente**. Selecione `cadastro.xlsx` junto do seu `registro.json`, confirme a aba
-validada e escolha um novo destino PDF. A identificação, Tipo vazio, data e área de
+validada. O PDF aprovado será salvo em `lote pdf` na saída configurada. A identificação, Tipo vazio, data e área de
 impressão são conferidos; a exportação e a validação final são repetidas. O hash da
 versão escolhida impede exportar silenciosamente uma versão alterada após a
 conferência. Alterações manuais anteriores à seleção são uma nova versão a ser
 conferida pelo usuário; não exigem reimportar a cotação ou aprovar materiais outra
 vez. O registro local associa o arquivo ao fluxo do aplicativo, sem constituir
 certificação de autenticidade ou homologação visual. Não se sobrescreve um PDF
-existente: escolha outro nome ou mantenha a saída anterior fora do novo destino.
+existente: cada reexportação recebe um novo identificador e preserva a anterior.
 
 No resumo do lote, **Tentar novamente somente PDFs** reutiliza os Excel salvos dos
 itens com erro, sem preencher novamente nem modificar cadastros bem-sucedidos.
@@ -842,14 +843,16 @@ nome, conteúdo obrigatório completo, data, páginas vazias, limites de texto e
 A exportação preserva a configuração de impressão atual e a proteção do modelo.
 As descrições históricas acima sobre forçar A4, Fit To e limpar quebras foram substituídas.
 
-Na geração individual e em lote, o PDF usa o nome revisado e aprovado do material
-registrado em `registro.json`, junto de `cadastro.xlsx` na pasta exclusiva do item.
-Acentos e espaços são preservados; caracteres inválidos no Windows são substituídos
-por `_`, nomes reservados são protegidos e o nome é limitado a 100 caracteres.
-Materiais com nomes iguais recebem pastas exclusivas. Reexportações na mesma pasta
-recebem sufixos `(2)`, `(3)` etc., preservando os PDFs anteriores.
-Visualizar e Imprimir usam o PDF aprovado mais recente do registro salvo; Abrir saída
-abre a pasta do item selecionado. Saídas antigas com `cadastro.pdf` continuam acessíveis.
+Na geração individual e em lote, o PDF recebe um nome automático e exclusivo
+`cadastro_<identificador>.pdf`, sem depender do nome do material, compatível com
+Windows. Todos os PDFs aprovados ficam em `lote pdf` dentro da saída configurada,
+inclusive quando os Excel estão dentro de subpastas de lotes. Excel e JSON
+continuam nas pastas exclusivas dos materiais. Reexportações recebem novos nomes
+e preservam as anteriores. O campo `pdf_path` do `registro.json` aponta para o
+PDF aprovado mais recente. Visualizar e Imprimir consultam essa associação;
+Abrir saída abre a pasta de saída configurada, que contém `lote pdf`.
+Saídas antigas com nomes de material ou `cadastro.pdf` continuam acessíveis;
+não são movidas, renomeadas nem apagadas automaticamente.
 
 Diferença de papel não mantém marcador `.pendente`, não cria diagnóstico e não
 segrega o PDF. Falhas reais continuam bloqueadas e preservadas em diagnóstico,
@@ -913,3 +916,46 @@ Validação da importação de listas: **262 testes passaram**, nenhum falhou. I
 25 casos novos para parser e interface, edição/cancelamento, origem manual,
 seleção/aprovação de 19 itens e geração em lote de 19 cadastros sintéticos com
 preservação do modelo. A exportação COM é simulada nos testes Linux.
+
+
+## Pasta única de PDFs aprovados — lote pdf
+
+A geração individual, Gerar todos os aprovados, Gerar selecionados, a nova
+tentativa dos PDFs de lote e as duas formas de reexportar usam a mesma pasta
+`<saída configurada>/lote pdf`. Ela é criada automaticamente quando há PDF
+aprovado a publicar. Não há mudanças no conteúdo, layout, modelo nem organização
+dos Excel. Os registros JSON continuam nos locais anteriores e recebem apenas
+a associação ao novo caminho do PDF. Por exemplo:
+
+```text
+documentos/
+    lote pdf/
+        cadastro_a1b2...pdf
+        cadastro_c3d4...pdf
+    MATERIAL_identificador/
+        cadastro.xlsx
+        registro.json
+```
+
+A exportação e todas as validações existentes acontecem primeiro numa pasta
+exclusiva `exportacao_pdf_<id>` junto do cadastro, fora de `lote pdf`. Somente
+após aprovação o PDF é copiado sem alterar seus bytes. O nome usa identificador
+aleatório e publicação atômica sem substituição, impedindo sobrescrita mesmo
+em caso de colisão. A cópia intermediária fica fora de `lote pdf`, de forma que
+nenhum PDF parcial é exposto nessa pasta. A associação no JSON é substituída atomicamente depois da cópia.
+A reexportação de Excel existente usa a saída configurada automaticamente,
+sem solicitar outro destino PDF. Visualizar e Imprimir usam o PDF do registro.
+
+Falhas de exportação, integridade ou encerramento COM mantêm os documentos
+reprovados, marcadores e relatórios na pasta de exportação/diagnóstico do cadastro.
+Eles não são publicados em `lote pdf`. Uma reexportação malsucedida conserva a
+associação ao PDF aprovado anterior. Nenhum diagnóstico anterior é apagado.
+Se a gravação da associação falhar, a operação informa erro e preserva o PDF
+aprovado já copiado; os arquivos Excel e os registros anteriores permanecem.
+
+Validação da centralização: **272 testes passaram**, nenhum falhou. Inclui geração
+individual e em lote, nomes únicos e colisões, reexportação, leitura do vínculo
+no registro, visualização Qt, impressão simulada, preservação de Excel e PDFs
+anteriores e isolamento de falhas de conteúdo, páginas vazias, limpeza COM e cópia.
+A exportação nativa e a impressão física continuam dependendo de Windows/Excel;
+os testes Linux usam documentos sintéticos e COM simulado.

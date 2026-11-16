@@ -38,7 +38,9 @@ def test_batch_independent_files_names_and_original(count, settings, monkeypatch
     assert all(r.status == 'sucesso' and r.folder.parent == root for r in results)
     assert [p[0] for p in progress] == list(range(1, count + 1))
     for result in results:
-        assert all((result.folder / f).is_file() for f in ('cadastro.xlsx', generation.material_pdf(result.folder).name, 'registro.json'))
+        assert all((result.folder / f).is_file() for f in ('cadastro.xlsx', 'registro.json'))
+        assert generation.material_pdf(result.folder).is_file()
+        assert generation.material_pdf(result.folder).parent == Path(settings.output) / 'lote pdf'
         book = load_workbook(result.folder / 'cadastro.xlsx')
         assert book.active['C16'].value is None
         assert book.active['A27'].value is None
@@ -66,7 +68,7 @@ def test_pending_failure_continuation_and_retry(settings, monkeypatch):
     assert 'aprove' in results[1].reason.lower()
     failed = results[2]
     assert (failed.folder / 'cadastro.xlsx').is_file() and not (failed.folder / 'cadastro.pdf').exists()
-    preserved = {p: p.read_bytes() for r in results if r.folder for p in r.folder.iterdir()}
+    preserved = {p: p.read_bytes() for r in results if r.folder for p in r.folder.rglob('*') if p.is_file()}
     monkeypatch.setattr(generation, 'export_pdf', fake_pdf)
     _, retried = generation.generate_batch([(r.row, r.item) for r in results if r.status == 'erro'], settings, root=root)
     assert len(retried) == 1 and retried[0].row == 2 and retried[0].status == 'sucesso'
