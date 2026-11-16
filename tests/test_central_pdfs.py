@@ -68,7 +68,7 @@ def test_collision_does_not_overwrite(template, tmp_path, monkeypatch):
     folder, _, _ = generation.generate_documents(approved(), settings, pdf=False)
     shared = Path(settings.output) / 'lote pdf'; shared.mkdir()
     existing = shared / ('cadastro_' + 'b' * 32 + '.pdf'); existing.write_bytes(b'preservar')
-    values = iter(['a' * 32, 'b' * 32, 'c' * 32, 'd' * 32])
+    values = iter(['b' * 32, 'c' * 32, 'd' * 32])
     monkeypatch.setattr(file_manager, 'uuid4', lambda: SimpleNamespace(hex=next(values)))
     path = export_central_pdf(folder / 'cadastro.xlsx', folder, settings.output, settings.sheet,
                              approved().name, exporter=synthetic_export)
@@ -83,7 +83,7 @@ def test_native_rejected_pdf_never_enters_shared_folder(native, tmp_path, mode):
     setattr(native, mode, True)
     with pytest.raises(PdfExportError):
         export_central_pdf(native.source, folder, tmp_path / 'saida', 'Criação de Material Nacional', 'Material teste')
-    assert not (tmp_path / 'saida' / 'lote pdf').exists()
+    assert not list((tmp_path / 'saida' / 'lote pdf').iterdir())
     assert list(folder.rglob('reprovado_*.pdf')) and list(folder.rglob('diagnostico_pdf_*.json'))
     assert not json.loads((folder / 'registro.json').read_text()).get('pdf_path')
 

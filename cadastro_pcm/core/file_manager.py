@@ -59,7 +59,7 @@ def material_pdf(folder, name=None, *, new=False):
     return legacy if usable_pdf(legacy) else candidates[0]
 
 
-def export_central_pdf(workbook, folder, output, sheet, name, pages=1, *, exporter=None):
+def _export_central_pdf(workbook, folder, output, sheet, name, pages, exporter, context):
     """Validate outside the shared folder, then publish exclusively and link the record."""
     import json
     import shutil
@@ -67,16 +67,21 @@ def export_central_pdf(workbook, folder, output, sheet, name, pages=1, *, export
     import tempfile
     from .pdf_exporter import export_pdf
     from .pdf_diagnostics import usable_pdf
-    folder, output = Path(folder), Path(output)
-    staging = new_output(folder, 'exportacao_pdf')
+    workbook, folder, output = Path(workbook).resolve(), Path(folder).resolve(), Path(output).resolve()
+    shared = output / 'lote pdf'
+    context.update(stage='criar_diretorio_pdf', destination=str(shared))
+    shared.mkdir(parents=True, exist_ok=True)
+    context['stage'] = 'criar_temporario_pdf'
+    staging = Path(tempfile.mkdtemp(prefix='pcm_')).resolve()
     source = staging / 'cadastro.pdf'
     exporter = exporter or export_pdf
     # Failed exports and their diagnostics remain outside the approved PDF folder.
+    context.update(stage='exportar_pdf', destination=str(source), temporary_directory=str(staging))
     exporter(workbook, source, sheet, name, pages)
+    context['stage'] = 'conferir_pdf_aprovado'
     if not usable_pdf(source) or source.stat().st_size == 0:
         raise RuntimeError('O arquivo PDF aprovado não foi criado.')
-    shared = output.resolve() / 'lote pdf'
-    shared.mkdir(parents=True, exist_ok=True)
+    context['stage'] = 'copiar_pdf_aprovado'
     # Copy outside the shared folder, then publish the complete PDF atomically.
     # Windows rename refuses replacement; POSIX link provides the same guarantee.
     descriptor, temporary_pdf = tempfile.mkstemp(prefix='.pcm_pdf_', suffix='.tmp', dir=shared.parent)
@@ -86,6 +91,7 @@ def export_central_pdf(workbook, folder, output, sheet, name, pages=1, *, export
             shutil.copyfileobj(incoming, target)
         for _ in range(10):
             destination = shared / ('cadastro_' + uuid4().hex + '.pdf')
+            context.update(stage='publicar_pdf', destination=str(destination))
             try:
                 if os.name == 'nt':
                     os.rename(temporary_pdf, destination)
@@ -98,6 +104,7 @@ def export_central_pdf(workbook, folder, output, sheet, name, pages=1, *, export
             raise ValueError('Não foi possível reservar um nome exclusivo para o PDF.')
     finally:
         temporary_pdf.unlink(missing_ok=True)
+    context.update(stage='associar_pdf_registro', pdf_published=True)
     record = folder / 'registro.json'
     data = json.loads(record.read_text(encoding='utf-8'))
     data['pdf_path'] = str(destination)
@@ -109,6 +116,32 @@ def export_central_pdf(workbook, folder, output, sheet, name, pages=1, *, export
         temporary.replace(record)
     finally:
         temporary.unlink(missing_ok=True)
-    source.unlink()
-    staging.rmdir()
+    # A cleanup failure after publication must not invalidate an approved PDF.
+    try:
+        source.unlink()
+        staging.rmdir()
+    except OSError:
+        pass
     return destination
+
+
+def export_central_pdf(workbook, folder, output, sheet, name, pages=1, *, exporter=None):
+    """Keep Excel's temporary paths short; retain exact failure context locally only."""
+    context = {'stage': 'preparar_centralizacao', 'destination': str(Path(output).resolve() / 'lote pdf')}
+    try:
+        return _export_central_pdf(workbook, folder, output, sheet, name, pages, exporter, context)
+    except Exception as exc:
+        # Preserve new evidence with the cadastro, without changing Excel's short paths.
+        import shutil
+        staging = context.get('temporary_directory')
+        if staging and Path(staging).is_dir():
+            retained = Path(folder).resolve() / 'diagnostico_pdf' / Path(staging).name
+            try:
+                shutil.copytree(staging, retained)
+                context['retained_diagnostic_directory'] = str(retained)
+                if getattr(exc, 'report_path', None):
+                    exc.report_path = retained / Path(exc.report_path).relative_to(staging)
+            except (OSError, ValueError):
+                pass  # The original short temporary directory remains available.
+        exc.pcm_context = context
+        raise

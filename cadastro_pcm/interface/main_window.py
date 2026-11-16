@@ -45,7 +45,7 @@ class Worker(QThread):
                 logging.error('Falha na operação com diagnóstico sanitizado disponível.')
                 self.diagnostic.emit(payload)
             else:
-                logging.exception('Falha na operação')
+                logging.error('Falha na operação: %s', type(exc).__name__)
             self.failed.emit(str(exc))
 
 
@@ -760,7 +760,7 @@ class Window(QMainWindow):
                 self.update_actions()
                 if error:
                     self.last_error = error
-                    self.date_diagnostic = diagnostic
+                    self.date_diagnostic = diagnostic if diagnostic and not diagnostic.get('local_only') else None
                     self.error_dialog('PDF não aprovado — Excel preservado', error)
                     return
                 self.job_message = f'Geração concluída · {folder}'
@@ -861,16 +861,28 @@ class Window(QMainWindow):
         failed = [r for r in results if r.status == 'erro']
         skipped = sum(r.status == 'ignorado' for r in results)
         layout.addWidget(label(f'{success + len(failed)} materiais aprovados · {success} cadastros gerados · '
-                               f'{len(failed)} com erro · {skipped} pendentes não incluídos'))
-        table = QTableWidget(len(results), 4)
-        table.setHorizontalHeaderLabels(['Material', 'Resultado', 'Motivo', 'Pasta'])
+                               f'{len(failed)} com erro · {skipped} pendentes não incluídos · '
+                               f"{sum(r.details['excel'] == 'gerado' for r in results)} Excel gerados"))
+        table = QTableWidget(len(results), 7)
+        table.setHorizontalHeaderLabels(['Material', 'Resultado', 'Excel', 'PDF', 'Etapa', 'Motivo', 'Pasta'])
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         for row, result in enumerate(results):
-            for col, text in enumerate((result.item.name, result.status, result.reason,
-                                       str(result.folder or ''))):
-                cell = QTableWidgetItem(text); cell.setToolTip(text); table.setItem(row, col, cell)
+            detail = result.details
+            titles = {'item_id': 'Identificador', 'excel': 'Excel', 'pdf': 'PDF',
+                      'excel_path': 'Arquivo Excel', 'stage': 'Etapa', 'exception_type': 'Tipo da exceção',
+                      'message': 'Mensagem completa', 'codes': 'Códigos de erro', 'destination': 'Destino',
+                      'temporary_directory': 'Temporário', 'retained_diagnostic_directory': 'Diagnóstico preservado'}
+            full = '\n'.join(f'{titles.get(key, key)}: {value}' for key, value in detail.items())
+            for col, text in enumerate((result.item.name, result.status, detail['excel'], detail['pdf'],
+                                       detail['stage'], result.reason, str(result.folder or ''))):
+                cell = QTableWidgetItem(text); cell.setToolTip(full); table.setItem(row, col, cell)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout.addWidget(table)
+        details = QTextEdit(); details.setReadOnly(True)
+        details.setPlaceholderText('Selecione um material para ver a exceção completa e os caminhos locais.')
+        table.itemSelectionChanged.connect(lambda: details.setPlainText(
+            table.item(table.currentRow(), 0).toolTip() if table.currentRow() >= 0 else ''))
+        layout.addWidget(details)
         actions = QHBoxLayout()
         actions.addWidget(button('Abrir pasta do lote', lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder.resolve())))))
         retry = button('Tentar novamente os itens com falha', dialog.accept)

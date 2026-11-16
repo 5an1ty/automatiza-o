@@ -24,6 +24,7 @@ def exception_codes(exc):
         if isinstance(info, tuple) and len(info) > 5 and isinstance(info[5], int):
             entry['scode'] = f'0x{info[5] & 0xffffffff:08X}'
         if isinstance(exc, OSError) and exc.errno is not None: entry['errno'] = exc.errno
+        if isinstance(getattr(exc, 'winerror', None), int): entry['winerror'] = exc.winerror
         if getattr(exc, 'excel_cleanup_errors', None): entry['cleanup'] = exc.excel_cleanup_errors
         result.append(entry)
         exc = exc.__cause__ or exc.__context__

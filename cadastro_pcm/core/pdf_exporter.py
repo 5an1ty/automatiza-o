@@ -64,7 +64,8 @@ def export_pdf(workbook, destination, sheet, name, expected_pages=1, *, report=N
     directory = destination.parent / 'diagnostico_pdf'
     marker = pending_marker(destination)
     started = False
-    event(report, 'preparar_arquivos')
+    event(report, 'preparar_arquivos', destination_length=len(str(destination)),
+          workbook_length=len(str(Path(workbook).resolve())))
     try:
         if destination.exists() or destination == Path(workbook).resolve():
             raise ValueError('PDF de destino já existe ou coincide com a entrada.')
@@ -87,11 +88,13 @@ def export_pdf(workbook, destination, sheet, name, expected_pages=1, *, report=N
             date_epoch = wb.epoch
         finally:
             wb.close()
-        event(report, 'abrir_excel', print_area=area)
+        event(report, 'criar_temporario_excel', print_area=area)
         # Only a disposable copy receives localized date presentation repairs.
         with tempfile.TemporaryDirectory(prefix='pcm_pdf_', dir=destination.parent) as folder:
             working = Path(folder) / 'impressao.xlsx'
+            event(report, 'copiar_excel_temporario')
             shutil.copyfile(workbook, working)
+            event(report, 'abrir_excel', working_path_length=len(str(working)))
             with excel_session(working, read_only=False) as (_, book):
                 ws = book.Worksheets(sheet)
                 event(report, 'selecionar_aba')

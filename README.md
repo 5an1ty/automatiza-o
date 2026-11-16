@@ -938,7 +938,8 @@ documentos/
 ```
 
 A exportação e todas as validações existentes acontecem primeiro numa pasta
-exclusiva `exportacao_pdf_<id>` junto do cadastro, fora de `lote pdf`. Somente
+curta e exclusiva `pcm_<id>` no temporário local do sistema, fora de `lote pdf`.
+Isso evita somar lote, descrição e subpastas aos caminhos usados pelo Excel. Somente
 após aprovação o PDF é copiado sem alterar seus bytes. O nome usa identificador
 aleatório e publicação atômica sem substituição, impedindo sobrescrita mesmo
 em caso de colisão. A cópia intermediária fica fora de `lote pdf`, de forma que
@@ -947,7 +948,9 @@ A reexportação de Excel existente usa a saída configurada automaticamente,
 sem solicitar outro destino PDF. Visualizar e Imprimir usam o PDF do registro.
 
 Falhas de exportação, integridade ou encerramento COM mantêm os documentos
-reprovados, marcadores e relatórios na pasta de exportação/diagnóstico do cadastro.
+reprovados, marcadores e relatórios no temporário curto e tentam preservar uma
+cópia em `diagnostico_pdf/pcm_<id>` junto do cadastro. Os caminhos disponíveis
+aparecem no diagnóstico local; se a cópia falhar, o original temporário é mantido.
 Eles não são publicados em `lote pdf`. Uma reexportação malsucedida conserva a
 associação ao PDF aprovado anterior. Nenhum diagnóstico anterior é apagado.
 Se a gravação da associação falhar, a operação informa erro e preserva o PDF
@@ -959,3 +962,42 @@ no registro, visualização Qt, impressão simulada, preservação de Excel e PD
 anteriores e isolamento de falhas de conteúdo, páginas vazias, limpeza COM e cópia.
 A exportação nativa e a impressão física continuam dependendo de Windows/Excel;
 os testes Linux usam documentos sintéticos e COM simulado.
+
+
+## Investigar falhas de geração em lote
+
+O relatório do lote separa **Excel gerado** de **PDF aprovado**. Selecionar uma
+linha abre os detalhes locais completos; o tooltip também mostra identificador
+do item, etapa, tipo e cadeia completa de exceções, HRESULT/SCODE/errno/WinError
+quando disponíveis, destino e pastas de diagnóstico. Esses detalhes podem conter
+caminhos e mensagens corporativas: copie somente para suporte autorizado. Os
+logs e o comando Salvar diagnósticos do lote continuam usando dados sanitizados,
+sem nomes, caminhos ou mensagens COM brutas.
+
+O fluxo anterior exportava dentro de `lote/material/exportacao_pdf_<id>` e criava
+outra cópia de impressão abaixo desse caminho. Esse aninhamento introduzido na
+centralização aumentava os caminhos passados ao Office e pode atingir limites
+legados do Excel. A regressão foi reproduzida com COM simulado impondo limite de
+caminho; o mesmo cenário passa com a área temporária curta. Isso não comprova a
+causa dos 15 erros observados no Windows, pois o relatório dessa execução e o
+Excel real não estão disponíveis neste ambiente. O diagnóstico novo permite
+distinguir erros de caminho, permissões, exportação COM, validação e publicação.
+Não é necessário remover símbolos das descrições; pastas são sanitizadas e o
+nome do PDF publicado continua independente do material.
+
+A pasta `lote pdf` é criada antes da chamada de exportação; a cópia aberta pelo
+Excel e o PDF temporário usam caminhos absolutos. Somente o PDF que passou pelas
+validações existentes é publicado, com nome exclusivo. Não se reutilizam marcadores
+`.pendente` de outras tentativas. Falhas mantêm o Excel salvo e a associação ao
+último PDF aprovado, sem apagar outros documentos. Use **Tentar novamente somente
+PDFs** para reutilizar os Excel já gerados. Uma falha de encerramento da instância
+Excel continua interrompendo o lote por segurança.
+
+Validação desta investigação: **278 testes passaram**, nenhum falhou. Os novos
+casos incluem lotes sintéticos de 15 materiais com símbolos e duplicatas, pasta
+central nova/existente, regressão de caminho longo no COM simulado, falha em um
+item com continuação dos outros 14, Excel preservado, código COM e mensagem
+completa no painel, bloqueio de diretório e ausência de dados privados nos logs.
+As validações de conteúdo, data, páginas, proteção e encerramento COM continuam
+ativas. O teste com Microsoft Excel real e o diagnóstico dos 15 erros originais
+continuam necessários para confirmar a causa no computador do usuário.
