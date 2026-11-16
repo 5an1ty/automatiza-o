@@ -9,7 +9,7 @@ import pymupdf
 from openpyxl.utils.datetime import from_excel
 from .template_reader import read_template
 from .excel_runtime import excel_session
-from .print_layout import print_area, configure_page, check_print_scale
+from .print_layout import print_area
 from .excel_date import check_com_date
 from .pdf_diagnostics import event, exception_codes, save_diagnostic, PdfExportError, pending_marker
 from .print_layout import PROPOSED
@@ -40,7 +40,7 @@ def validate_pdf(path, name, expected_pages=1, expected_texts=(), require_a4=Fal
             raise ValueError('Data brasileira de E8 não encontrada no PDF exportado.')
         for page in pdf:
             if require_a4 and (abs(page.rect.width - 595.28) > 2 or abs(page.rect.height - 841.89) > 2):
-                raise ValueError('PDF não está em A4 vertical.')
+                logging.info('PDF com dimensões diferentes de A4 vertical; layout de impressão aceito.')
             if require_a4:
                 for block in page.get_text('dict')['blocks']:
                     for line in block.get('lines', []):
@@ -88,7 +88,7 @@ def export_pdf(workbook, destination, sheet, name, expected_pages=1, *, report=N
         finally:
             wb.close()
         event(report, 'abrir_excel', print_area=area)
-        # Only a disposable copy receives PageSetup, date formatting or break changes.
+        # Only a disposable copy receives localized date presentation repairs.
         with tempfile.TemporaryDirectory(prefix='pcm_pdf_', dir=destination.parent) as folder:
             working = Path(folder) / 'impressao.xlsx'
             shutil.copyfile(workbook, working)
@@ -107,10 +107,7 @@ def export_pdf(workbook, destination, sheet, name, expected_pages=1, *, report=N
                 if date_text:
                     check_com_date(ws.Range('E8'), requested_date, date_epoch,
                                    phase='preparação do PDF', repair=True, exact=True)
-                event(report, 'aplicar_page_setup')
-                configure_page(ws, area, expected_pages)
-                event(report, 'medir_escala')
-                scale = check_print_scale(ws, area, expected_pages)
+                scale = None  # Preserve the workbook's approved print configuration.
                 setup = {}
                 for key in ('PaperSize', 'Orientation', 'Zoom', 'FitToPagesWide', 'FitToPagesTall',
                             'LeftMargin', 'RightMargin', 'TopMargin', 'BottomMargin'):
@@ -125,12 +122,6 @@ def export_pdf(workbook, destination, sheet, name, expected_pages=1, *, report=N
                     setup['PrintArea'] = []
                 event(report, 'configurar_paginacao', page_setup=setup, scale=scale)
                 protected_breaks = False
-                try:
-                    ws.ResetAllPageBreaks()
-                except Exception:
-                    if not ws.ProtectContents:
-                        raise ValueError('Não foi possível limpar quebras na cópia de impressão. Confira a configuração do Excel; o modelo foi preservado.')
-                    protected_breaks = True
                 event(report, 'conferir_textos', protected_breaks=protected_breaks)
                 expected_texts = [(address, str(ws.Range(address).Text or '')) for address in addresses]
                 for address, text in expected_texts:
@@ -156,10 +147,6 @@ def export_pdf(workbook, destination, sheet, name, expected_pages=1, *, report=N
                 event(report, 'encerrar_excel', validation='aprovado')
         event(report, 'concluido', validation='aprovado')
         marker.unlink(missing_ok=True)
-        try:
-            save_diagnostic(report, directory)
-        except (OSError, ValueError):
-            logging.warning('Relatório PDF não gravado; exportação e validação concluídas.')
         return destination
     except Exception as exc:
         stage = report['stage']

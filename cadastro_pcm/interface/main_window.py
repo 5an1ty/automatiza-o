@@ -1,3 +1,4 @@
+from cadastro_pcm.core.file_manager import material_pdf
 import json
 import logging
 import os
@@ -466,7 +467,7 @@ class Window(QMainWindow):
             except OSError as exc:
                 reasons.append('Falha de acesso ao modelo: ' + str(exc))
         ready = not reasons
-        pdf = selected and row in self.outputs and usable_pdf(self.outputs[row] / 'cadastro.pdf')
+        pdf = selected and row in self.outputs and usable_pdf(material_pdf(self.outputs[row]))
         self.edit_button.setEnabled(selected); self.research_button.setEnabled(selected)
         self.excel_button.setEnabled(ready); self.pdf_button.setEnabled(ready and sys.platform == 'win32')
         reason = '\n'.join(reasons) if reasons else 'Item aprovado e modelo conferido. Pronto para gerar Excel.'
@@ -659,7 +660,7 @@ class Window(QMainWindow):
             buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject); layout.addWidget(buttons)
             if dialog.exec() != QDialog.Accepted: return
             selected_sheet = sheet.currentText()
-            destination = QFileDialog.getSaveFileName(self, 'Salvar novo PDF', str(Path(path).with_name('cadastro_reexportado.pdf')), 'PDF (*.pdf)')[0]
+            destination = QFileDialog.getSaveFileName(self, 'Salvar novo PDF', str(material_pdf(Path(path).parent, new=True)), 'PDF (*.pdf)')[0]
             if not destination: return
             if not destination.lower().endswith('.pdf'): destination += '.pdf'
             def task():
@@ -891,23 +892,26 @@ class Window(QMainWindow):
             if folder is None or not (folder / 'cadastro.xlsx').is_file():
                 raise ValueError('Excel salvo não encontrado. Gere o Excel deste item primeiro.')
             sheet, name, pages = self.output_specs.get(row, (self.settings.sheet, item.name, self.settings.expected_pages))
+            destination = material_pdf(folder, name, new=True)
             def task():
                 try:
-                    export_pdf(folder / 'cadastro.xlsx', folder / 'cadastro.pdf', sheet, name, pages)
-                    if not (folder / 'cadastro.pdf').is_file(): raise RuntimeError('PDF não criado.')
+                    export_pdf(folder / 'cadastro.xlsx', destination, sheet, name, pages)
+                    if not destination.is_file(): raise RuntimeError('PDF não criado.')
                 except Exception as exc:
                     raise RuntimeError(f'Excel preservado em {folder}. Nova exportação falhou: {exc}') from exc
                 return folder
             def done(result):
-                self.job_message = f'PDF exportado · {result / "cadastro.pdf"}'
+                self.job_message = f'PDF exportado · {destination}'
                 self.update_actions()
-                QMessageBox.information(self, 'PDF exportado', f'{result / "cadastro.pdf"}\nConfira legibilidade, logotipo, Tipo e assinaturas antes de imprimir.')
+                QMessageBox.information(self, 'PDF exportado', f'{destination}\nConfira legibilidade, logotipo, Tipo e assinaturas antes de imprimir.')
             self.run_job(task, done)
         except Exception as exc:
             QMessageBox.warning(self, 'Exportar PDF', str(exc))
 
     def pdf_path(self):
-        row, _ = self.selected(); path = self.outputs.get(row, Path('/__ausente__')) / 'cadastro.pdf'
+        row, _ = self.selected()
+        if row not in self.outputs: raise ValueError('Gere o PDF deste item antes de continuar.')
+        path = material_pdf(self.outputs[row])
         if not usable_pdf(path): raise ValueError('Gere e valide o PDF deste item antes de continuar.')
         return path
 
@@ -930,7 +934,7 @@ class Window(QMainWindow):
         except Exception as exc: QMessageBox.warning(self, 'Impressão', str(exc))
 
     def open_output(self):
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(self.settings.output).resolve())))
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.outputs.get(self.selected()[0], Path(self.settings.output)).resolve())))
 
     def closeEvent(self, event):
         if self.worker is not None:

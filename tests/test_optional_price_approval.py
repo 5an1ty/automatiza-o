@@ -227,8 +227,6 @@ def test_export_pdf_optional_price_native_simulation(template, tmp_path, monkeyp
         book.close()
     monkeypatch.setattr(pdf_exporter, 'excel_session', session)
     monkeypatch.setattr(pdf_exporter, 'sys', SimpleNamespace(platform='win32'))
-    monkeypatch.setattr(pdf_exporter, 'configure_page', lambda *args: None)
-    monkeypatch.setattr(pdf_exporter, 'check_print_scale', lambda *args: None)
     pdf_exporter.export_pdf(workbook, target, 'Criação de Material Nacional', item.name)
     assert observed == ['A20 vazio antes de exportar'] and target.is_file()
     assert workbook.read_bytes() == original

@@ -38,7 +38,7 @@ def test_batch_independent_files_names_and_original(count, settings, monkeypatch
     assert all(r.status == 'sucesso' and r.folder.parent == root for r in results)
     assert [p[0] for p in progress] == list(range(1, count + 1))
     for result in results:
-        assert all((result.folder / f).is_file() for f in ('cadastro.xlsx', 'cadastro.pdf', 'registro.json'))
+        assert all((result.folder / f).is_file() for f in ('cadastro.xlsx', generation.material_pdf(result.folder).name, 'registro.json'))
         book = load_workbook(result.folder / 'cadastro.xlsx')
         assert book.active['C16'].value is None
         assert book.active['A27'].value is None

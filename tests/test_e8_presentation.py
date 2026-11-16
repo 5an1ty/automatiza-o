@@ -224,7 +224,7 @@ def test_pdf_copy_has_readable_date_and_original_dimensions(tmp_path, monkeypatc
         def ResetAllPageBreaks(self): raise RuntimeError('Protected')
         def ExportAsFixedFormat(self, *args):
             exports.append(True)
-            assert self.PageSetup.FitToPagesTall == self.PageSetup.FitToPagesWide == 1
+            assert not hasattr(self.PageSetup, 'FitToPagesTall')
             with pymupdf.open() as doc:
                 page = doc.new_page(width=595.28, height=841.89)
                 page.insert_text((30, 30), 'Produto\n' + cell.Text + '\nControle institucional', fontsize=10)

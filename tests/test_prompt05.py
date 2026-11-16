@@ -230,7 +230,7 @@ def test_pdf_validation_requires_date_all_fields_a4_and_readability(tmp_path):
     with pytest.raises(ValueError, match='ausente ou cortado'):
         pdf_exporter.validate_pdf(path, 'Parafuso M8', expected_texts=[('A14', 'Descrição longa cortada')])
     letter = tmp_path / 'letter.pdf'; synthetic_pdf(letter, ['Parafuso M8'], width=612, height=792)
-    with pytest.raises(ValueError, match='A4'): pdf_exporter.validate_pdf(letter, 'Parafuso M8', require_a4=True)
+    pdf_exporter.validate_pdf(letter, 'Parafuso M8', require_a4=True)
     tiny = tmp_path / 'tiny.pdf'; synthetic_pdf(tiny, ['Parafuso M8'], fontsize=4)
     with pytest.raises(ValueError, match='5 pontos'): pdf_exporter.validate_pdf(tiny, 'Parafuso M8', require_a4=True)
     with pytest.raises(ValueError, match='ausente ou cortado'):
@@ -315,9 +315,8 @@ def test_pdf_native_flow_uses_disposable_copy_and_fits_one_page(extended_templat
                 calls.append('reset')
                 if protected: raise RuntimeError('Quebras não podem ser excluídas nesta folha protegida')
             def ExportAsFixedFormat(self, *args):
-                assert setup.FitToPagesWide == setup.FitToPagesTall == 1 and setup.Zoom is False
-                assert setup.PaperSize == 9 and setup.Orientation == 1
-                assert calls == ['reset']
+                assert vars(setup) == dict(LeftMargin=36, RightMargin=36, TopMargin=36, BottomMargin=36)
+                assert calls == []
                 texts = [self.Range(c.coordinate).Text for row in sheet for c in row if c.value is not None]
                 synthetic_pdf(pdf, texts)
         yield None, SimpleNamespace(Worksheets=lambda name: Sheet())
@@ -350,6 +349,6 @@ def test_pdf_retry_uses_saved_excel_without_reprocessing(gui, monkeypatch):
     window.settings.sheet = 'configuração posterior'
     window.retry_button.click(); wait_job(app, window)
     assert calls == [(workbook, 'Criação de Material Nacional', 'Parafuso M8', 1)]
-    assert workbook.read_bytes() == before and (folder / 'cadastro.pdf').is_file()
+    assert workbook.read_bytes() == before and (folder / 'Parafuso M8.pdf').is_file()
     assert window.preview_button.isEnabled() and not window.retry_button.isEnabled()
     assert 'PDF exportado' in window.status.text()

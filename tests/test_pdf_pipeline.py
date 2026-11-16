@@ -24,7 +24,7 @@ def native(tmp_path, monkeypatch):
     book.create_sheet('Outra aba')['A1'] = 'Nao exportar'
     book.save(source); book.close()
     state = SimpleNamespace(source=source, pages=1, error=None, empty=False, missing=False,
-                            clipped=False, closed=False, close_error=False, selected=[], called=False)
+                            clipped=False, closed=False, close_error=False, selected=[], called=False, width=595.28, height=841.89, blank=False)
     class Sheet:
         PageSetup = SimpleNamespace(LeftMargin=36, RightMargin=36, TopMargin=36, BottomMargin=36)
         ProtectContents = False
@@ -44,7 +44,8 @@ def native(tmp_path, monkeypatch):
                 target.write_bytes(b''); return
             document = pymupdf.open()
             for _ in range(state.pages):
-                page = document.new_page(width=595.28, height=841.89)
+                page = document.new_page(width=state.width, height=state.height)
+                if state.blank: continue
                 page.insert_text((40, 40), 'Material teste')
                 if not state.clipped: page.insert_text((40, 60), 'Controle')
             document.save(target); document.close()
@@ -74,11 +75,14 @@ def test_success_absolute_space_path_and_safe_report(native, tmp_path):
     assert native.closed and native.selected == ['Criação de Material Nacional']
     assert native.single_sheet and native.calculated
     assert usable_pdf(target) and native.source.read_bytes() == original
-    report = json.loads(next((target.parent / 'diagnostico_pdf').glob('*.json')).read_text())
+    assert not (target.parent / 'diagnostico_pdf').exists()
+    report = {}
+    run(native, target.with_name('segundo.pdf'))
+    pdf_exporter.export_pdf(native.source, target.with_name('terceiro.pdf'), 'Criação de Material Nacional', 'Material teste', report=report)
     assert report['pages'] == 1 and report['stage'] == 'concluido'
     text = json.dumps(report)
     assert 'Material teste' not in text and str(tmp_path) not in text
-    assert any(e['stage'] == 'configurar_paginacao' and e['page_setup']['PaperSize'] == 9 for e in report['events'])
+    assert all('PaperSize' not in e.get('page_setup', {}) for e in report['events'])
 
 
 @pytest.mark.parametrize('mode,stage,code', [('pages', 'validar_pdf', 'page_count'),
@@ -251,3 +255,56 @@ def test_unapproved_pdf_never_printable_after_quarantine_failure(native, tmp_pat
     target = tmp_path / 'pending.pdf'
     with pytest.raises(PdfExportError): run(native, target)
     assert target.is_file() and not usable_pdf(target)
+
+
+@pytest.mark.parametrize('dimensions', [(612, 792), (595.28, 841.89), (700, 900)])
+def test_approved_paper_sizes_preserve_excel(native, tmp_path, dimensions):
+    native.width, native.height = dimensions
+    before = native.source.read_bytes()
+    target = tmp_path / 'Material teste.pdf'
+    run(native, target)
+    assert usable_pdf(target) and not pending_marker(target).exists()
+    assert not (tmp_path / 'diagnostico_pdf').exists()
+    assert native.source.read_bytes() == before
+
+
+def test_blank_page_remains_blocking(native, tmp_path):
+    native.blank = True
+    with pytest.raises(PdfExportError) as error:
+        run(native, tmp_path / 'blank.pdf')
+    assert error.value.report['failure_code'] == 'empty_page'
+
+
+def test_material_names_collision_and_saved_preview(template, tmp_path, monkeypatch):
+    from cadastro_pcm.core.file_manager import material_pdf, safe_name
+    from cadastro_pcm.interface import main_window
+    from PySide6.QtWidgets import QApplication
+    monkeypatch.setenv('QT_QPA_PLATFORM', 'offscreen')
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main_window, 'load_settings', lambda: Settings(requester='Revisor'))
+    window = main_window.Window()
+    item = approved().model_copy(update={'name': 'CARTÃO MEMÓRIA D4X5-2 V5X C_M44 SV'})
+    settings = Settings(output=str(tmp_path), template=str(template), authorized_template_sha256=fingerprint(template))
+    def export(source, target, sheet, name, pages):
+        with pymupdf.open() as doc:
+            page = doc.new_page(); page.insert_text((40, 40), name); doc.save(target)
+    monkeypatch.setattr(generation, 'export_pdf', export)
+    _, results = generation.generate_batch([(0, item), (1, item)], settings)
+    assert all(r.status == 'sucesso' for r in results)
+    assert results[0].folder != results[1].folder
+    for result in results:
+        path = material_pdf(result.folder)
+        assert path.name == item.name + '.pdf' and path.parent == result.folder
+        previous = path.read_bytes()
+        next_path = material_pdf(result.folder, new=True)
+        assert next_path.name == item.name + ' (2).pdf'
+        export(None, next_path, None, item.name, 1)
+        assert material_pdf(result.folder) == next_path and path.read_bytes() == previous
+    window.items = [item]; window.refresh(); window.outputs[0] = results[0].folder
+    window.update_actions()
+    assert window.pdf_path() == material_pdf(results[0].folder)
+    assert window.preview_button.isEnabled() and window.print_button.isEnabled()
+    assert safe_name('A<>:"/\\|?* B. ') == 'A_________ B'
+    assert safe_name('CON') == '_CON'
+    assert safe_name('ação útil') == 'ação útil'
+    window.close()

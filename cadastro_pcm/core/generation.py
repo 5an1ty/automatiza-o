@@ -6,7 +6,7 @@ import logging
 
 from .excel_writer import write_excel, check_template
 from .pdf_exporter import export_pdf
-from .file_manager import new_output
+from .file_manager import new_output, material_pdf
 from .pdf_diagnostics import diagnostic_payload as date_error_payload
 from .pdf_diagnostics import PdfExportError, unsafe_cleanup
 
@@ -27,8 +27,9 @@ def generate_documents(item, settings, pdf=True, *, writer=None, exporter=None, 
     error, diagnostic = '', None
     if pdf:
         try:
-            exporter(xlsx, folder / 'cadastro.pdf', settings.sheet, item.name, settings.expected_pages)
-            if not (folder / 'cadastro.pdf').is_file():
+            destination = material_pdf(folder, item.name, new=True)
+            exporter(xlsx, destination, settings.sheet, item.name, settings.expected_pages)
+            if not destination.is_file():
                 raise RuntimeError('O arquivo PDF não foi criado.')
         except Exception as exc:
             if isinstance(exc, PdfExportError):
@@ -102,7 +103,7 @@ def retry_batch_pdfs(results, settings, progress=lambda *args: None):
         try:
             source = result.folder / 'cadastro.xlsx'
             info = existing_workbook(source)
-            export_existing(source, result.folder / 'cadastro.pdf', settings.sheet, info['sha256'], settings.expected_pages)
+            export_existing(source, material_pdf(result.folder, new=True), settings.sheet, info['sha256'], settings.expected_pages)
             retried.append(BatchResult(result.row, result.item, 'sucesso', folder=result.folder))
         except Exception as exc:
             payload = date_error_payload(exc)

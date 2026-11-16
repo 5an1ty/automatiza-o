@@ -84,7 +84,7 @@ calculadas/dinâmicas e validações personalizadas são bloqueadas conservadora
    autorizar explicitamente a aprovação com essa pendência para preenchimento posterior. Oito dígitos válidos não comprovam classificação fiscal correta.
 8. Gere Excel ou Excel + PDF para o item selecionado. Cada operação cria uma pasta
    exclusiva `NOME_identificador/cadastro.xlsx`, `registro.json` e, quando solicitado,
-   `cadastro.pdf`. O JSON registra dados e evidências. Não há sobrescrita de saídas.
+   `NOME DO MATERIAL.pdf`. O JSON registra dados e evidências. Não há sobrescrita de saídas.
 9. Visualize o PDF; confira cortes, descrição longa, estrutura, Tipo e assinaturas.
    **Imprimir…** abre o visualizador do Windows; use Ctrl+P e confirme lá. Não é
    enviado nenhum trabalho automaticamente à impressora.
@@ -112,14 +112,9 @@ Excel/pywin32 gera mensagem de incompatibilidade; não há fallback silencioso.
 A exportação cria uma cópia temporária do Excel preenchido e abre essa cópia em
 uma instância isolada do Excel, com macros e atualização de links desativadas.
 Exporta somente a aba pertinente. O modelo original e o Excel já salvo não são
-alterados pela preparação da impressão. Na cópia temporária, aplica A4 vertical,
-uma página de largura e, por padrão, uma de altura, e limpa as quebras de página.
-As margens existentes são mantidas. Antes de reduzir, mede largura e altura reais
-pelo Excel e bloqueia escala inferior a 85%. Se a proteção impedir limpar quebras,
-a proteção é mantida e o ajuste Fit To é usado para ignorar as quebras manuais;
-o resultado ainda precisa passar por todas as verificações do PDF. Se falhar,
-a causa e a restrição de quebras são informadas. A escala é uma barreira
-conservadora; legibilidade, objetos e sobreposições ainda exigem aceitação visual.
+alterados pela preparação da impressão. A exportação preserva papel, orientação,
+escala, margens e quebras configurados no Excel. Não tenta preencher a folha nem
+força A4. A data recebe apenas os ajustes localizados de apresentação já existentes.
 
 Se não houver área de impressão, os limites preliminares são A1:E33 (nacional)
 e A1:E34 (importado). Antes de utilizá-los, o programa rejeita conteúdo de células
@@ -129,7 +124,7 @@ confira o relatório, o modelo e o PDF antes de autorizar a versão real.
 
 O PDF deve existir, conter o nome do item, a data brasileira e os textos das
 células preenchidas/institucionais da aba, ter o número esperado de páginas e
-não ter páginas sem texto. A exportação também confere A4 vertical, limites de
+não ter páginas sem texto. Diferenças de papel são apenas informativas. A exportação confere limites de
 texto e fonte mínima de 5 pontos; não certifica imagens nem aceitação visual. PDFs reprovados ficam em diagnóstico local, fora do caminho de impressão; consulte a seção de diagnóstico PDF. Quando a exportação falha
 após a geração do Excel, a mensagem indica onde o Excel e registro JSON ficaram.
 Use **Exportar PDF do Excel salvo** para tentar novamente sem preencher outra
@@ -837,3 +832,32 @@ relatórios sem conteúdo corporativo e nova tentativa dos PDFs do lote.
 Windows e a paginação/aceitação visual do modelo real permanecem pendentes do teste
 local e do relatório copiado pelo usuário; não se declara correção definitiva com
 base nestes testes simulados.
+
+
+## Layout aprovado e nomes dos PDFs
+
+O tamanho físico da página não bloqueia mais a conclusão. PDFs A4 e de outras
+dimensões passam pelas mesmas verificações de existência/leitura, número de páginas,
+nome, conteúdo obrigatório completo, data, páginas vazias, limites de texto e fonte.
+A exportação preserva a configuração de impressão atual e a proteção do modelo.
+As descrições históricas acima sobre forçar A4, Fit To e limpar quebras foram substituídas.
+
+Na geração individual e em lote, o PDF usa o nome revisado e aprovado do material
+registrado em `registro.json`, junto de `cadastro.xlsx` na pasta exclusiva do item.
+Acentos e espaços são preservados; caracteres inválidos no Windows são substituídos
+por `_`, nomes reservados são protegidos e o nome é limitado a 100 caracteres.
+Materiais com nomes iguais recebem pastas exclusivas. Reexportações na mesma pasta
+recebem sufixos `(2)`, `(3)` etc., preservando os PDFs anteriores.
+Visualizar e Imprimir usam o PDF aprovado mais recente do registro salvo; Abrir saída
+abre a pasta do item selecionado. Saídas antigas com `cadastro.pdf` continuam acessíveis.
+
+Diferença de papel não mantém marcador `.pendente`, não cria diagnóstico e não
+segrega o PDF. Falhas reais continuam bloqueadas e preservadas em diagnóstico,
+inclusive marcadores de segurança; diagnósticos anteriores não são apagados.
+
+Validação automatizada usa PDFs sintéticos, Qt offscreen e Excel COM simulado no
+Linux. Microsoft Excel real e impressão física exigem conferência no Windows.
+
+Validação desta atualização: **237 testes passaram**, nenhum falhou, em Linux com
+Qt offscreen, incluindo papel não A4/A4, integridade, nomes, duplicatas, lote,
+resolução do PDF para visualização/impressão e preservação dos arquivos Excel.
