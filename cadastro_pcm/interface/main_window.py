@@ -196,7 +196,10 @@ class Window(QMainWindow):
         drop = QFrame(); drop.setObjectName('dropZone'); drop_layout = QVBoxLayout(drop)
         drop_layout.addWidget(label('Solte seus PDFs aqui', 'section'))
         drop_layout.addWidget(label('Cotações e documentos de fornecedores. Você também pode selecionar arquivos.', 'muted'))
-        drop_layout.addWidget(button('＋  Adicionar PDFs', self.add_files, True))
+        intake_actions = QHBoxLayout()
+        intake_actions.addWidget(button('＋  Adicionar PDFs', self.add_files, True))
+        intake_actions.addWidget(button('Importar lista', self.import_material_list))
+        drop_layout.addLayout(intake_actions)
         entry.addWidget(drop, 1)
         file_area = QVBoxLayout()
         self.documents = QListWidget(); self.documents.setMinimumHeight(90); self.documents.setMaximumHeight(125)
@@ -572,6 +575,15 @@ class Window(QMainWindow):
         row = self.table.currentRow()
         if row < 0: raise ValueError('Selecione um item.')
         return row, self.items[row]
+
+    def import_material_list(self):
+        from .material_list_dialog import MaterialListDialog
+        dialog = MaterialListDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            for item in dialog.result_items:
+                self.apply_defaults(item)
+                self.items.append(item)
+            self.refresh()
 
     def add_item(self):
         item = Item(); self.apply_defaults(item)

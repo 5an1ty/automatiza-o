@@ -861,3 +861,55 @@ Linux. Microsoft Excel real e impressão física exigem conferência no Windows.
 Validação desta atualização: **237 testes passaram**, nenhum falhou, em Linux com
 Qt offscreen, incluindo papel não A4/A4, integridade, nomes, duplicatas, lote,
 resolução do PDF para visualização/impressão e preservação dos arquivos Excel.
+
+
+## Importar lista de materiais por texto
+
+Em **Documentos de entrada → Importar lista**, cole ou digite os materiais e
+clique **Analisar lista**. A janela pode ser redimensionada e suas áreas de texto
+e tabela têm rolagem. Confira o contador, os alertas e a tabela; edite Material,
+NCM ou Preço diretamente na prévia. Clique **Adicionar à revisão** para confirmar,
+ou **Cancelar** para sair sem alterar os itens existentes. Alterar o texto exige
+nova análise antes de confirmar a importação.
+
+Formatos aceitos: descrição/NCM/preço em linhas separadas; uma linha com colunas
+separadas por `|`; tabela do Excel com tabulações; tabelas Markdown com cabeçalhos
+e separadores; linhas vazias e cabeçalhos repetidos. Exemplos:
+
+```text
+Válvula esfera 1¼", inox AISI 304
+NCM: 8481.80.95
+R$ 2.500,00
+
+Niple 90° | 73072900 | 45,00
+```
+
+NCMs de oito dígitos são normalizados como `XXXX.XX.XX`. Preços usam `Decimal`;
+valores brasileiros aceitam separador de milhar e vírgula decimal. Inteiros e
+valores como `250.00` exigem campo de preço explícito (coluna de preço, `Preço:`
+ou `R$`). Números dentro das descrições não viram preços ou NCMs. Vírgulas,
+hífens, frações, medidas, símbolos Unicode e códigos técnicos são preservados.
+Cada linha de descrição sem separadores inicia um material; se várias linhas
+forem uma única descrição, reúna-as na prévia antes de confirmar. Campos órfãos,
+repetidos ou inválidos geram avisos; confira a origem antes de continuar.
+
+A origem é **Lista inserida manualmente**. Não há consulta externa, inferência
+fiscal nem aprovação automática. NCM e preço ausentes permanecem pendentes.
+Possíveis duplicatas são sinalizadas e mantidas, sem união ou exclusão automática;
+confirmar a importação permite manter ambas. Os padrões locais de requisitante,
+data e campos do formulário são os mesmos dos demais itens.
+
+Após importar, use **Selecionar todos**, **Aprovar selecionados** ou **Aprovar todos**
+e os comandos de geração existentes. Pendências seguem a autorização humana já
+existente. Cada material gera seu Excel, registro e PDF independente, sem exigir
+PDF de entrada e sem alterar o modelo original. A importação acrescenta itens à
+revisão existente, cuja sessão continua sendo mantida em memória.
+
+Os testes usam listas sintéticas, incluindo 19 materiais; a lista corporativa real
+não foi fornecida e não foi testada nem publicada. Excel COM e exportação nativa
+continuam simulados no Linux; a validação real depende do Windows com Excel.
+
+Validação da importação de listas: **262 testes passaram**, nenhum falhou. Inclui
+25 casos novos para parser e interface, edição/cancelamento, origem manual,
+seleção/aprovação de 19 itens e geração em lote de 19 cadastros sintéticos com
+preservação do modelo. A exportação COM é simulada nos testes Linux.
