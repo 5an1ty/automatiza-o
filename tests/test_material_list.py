@@ -1,3 +1,4 @@
+from cadastro_pcm.core.records import material_record
 from decimal import Decimal
 from pathlib import Path
 import pytest
@@ -101,9 +102,9 @@ def test_no_pdf_batch_approval_generation_preserves_template(template, tmp_path,
     assert len(results) == count and all(r.status == 'sucesso' for r in results)
     for result in results:
         assert generation.material_pdf(result.folder).is_file()
-        assert generation.material_pdf(result.folder).parent == Path(settings.output) / 'lote pdf'
+        assert generation.material_pdf(result.folder, shared=True).parent == Path(settings.output) / 'lote pdf'
         assert (result.folder / 'cadastro.xlsx').is_file()
-        saved = Item.model_validate_json((result.folder / 'registro.json').read_text())
+        saved = Item.model_validate_json(material_record(result.folder).read_text())
         assert saved.evidence['name'].origin == 'manual'
     assert template.read_bytes() == before
 

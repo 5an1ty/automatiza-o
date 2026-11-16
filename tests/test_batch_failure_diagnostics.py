@@ -1,3 +1,4 @@
+from cadastro_pcm.core.records import material_record
 """Synthetic regressions; no corporate inputs or actual Windows Excel available."""
 import json
 from contextlib import contextmanager
@@ -35,8 +36,8 @@ def test_fifteen_special_and_duplicate_names_short_absolute_destinations(templat
     assert len(results) == 15 and all(r.status == 'sucesso' for r in results)
     assert all(r.details['excel'] == 'gerado' and r.details['pdf'] == 'aprovado' for r in results)
     assert len({material_pdf(r.folder) for r in results}) == 15
-    assert all(material_pdf(r.folder).parent == shared for r in results)
-    assert all((r.folder / 'cadastro.xlsx').is_file() and (r.folder / 'registro.json').is_file() for r in results)
+    assert all(material_pdf(r.folder, shared=True).parent == shared for r in results)
+    assert all((r.folder / 'cadastro.xlsx').is_file() and material_record(r.folder).is_file() for r in results)
     assert len(destinations) == 15 and template.read_bytes() == original
     if exists: assert (shared / 'anterior.pdf').read_bytes() == b'nao apagar'
 

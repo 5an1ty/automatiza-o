@@ -1,3 +1,4 @@
+from cadastro_pcm.core.records import material_record
 """Explicit deferred prices and human bulk approval; native Excel is simulated."""
 from contextlib import contextmanager
 from copy import copy
@@ -190,7 +191,7 @@ def test_batch_optional_price_and_record(gui, monkeypatch):
     _, results = generation.generate_batch([(0, item), (1, approved())], window.settings)
     assert all(r.status == 'sucesso' for r in results)
     assert seen == [None, 239]
-    record = json.loads((results[0].folder / 'registro.json').read_text())
+    record = json.loads(material_record(results[0].folder).read_text())
     assert record['price_fill_later'] is True and record['unit_price'] is None
 
 

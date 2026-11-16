@@ -1,3 +1,4 @@
+from cadastro_pcm.core.records import material_record
 """Shared output organization; real Excel export is simulated on Linux."""
 import json
 from pathlib import Path
@@ -30,15 +31,17 @@ def test_individual_batch_multiple_runs_and_record_links(template, tmp_path, mon
     first, error, _ = generation.generate_documents(approved(), settings)
     assert not error
     excel = (first / 'cadastro.xlsx').read_bytes()
-    record = json.loads((first / 'registro.json').read_text())
+    record = json.loads(material_record(first).read_text())
     path = material_pdf(first); data = path.read_bytes()
-    assert path.parent == Path(settings.output) / 'lote pdf' and record['pdf_path'] == str(path)
+    assert path.parent == first and record['pdf_path'] == str(path)
+    shared = material_pdf(first, shared=True)
+    assert shared.parent == Path(settings.output) / 'lote pdf' and shared.read_bytes() == data
     for _ in range(2):
         root, results = generation.generate_batch([(i, approved()) for i in range(3)], settings)
         assert all(r.status == 'sucesso' for r in results)
         assert all(r.folder.parent == root for r in results)
-        assert all(material_pdf(r.folder).parent == path.parent for r in results)
-    pdfs = list(path.parent.iterdir())
+        assert all(material_pdf(r.folder, shared=True).parent == shared.parent for r in results)
+    pdfs = list(shared.parent.iterdir())
     assert len(pdfs) == 7 and all(p.suffix == '.pdf' for p in pdfs)
     assert len({p.name for p in pdfs}) == 7
     assert path.read_bytes() == data and (first / 'cadastro.xlsx').read_bytes() == excel
@@ -52,15 +55,15 @@ def test_reexport_preserves_previous_pdf_excel_and_record_fields(template, tmp_p
     assert not error
     source = folder / 'cadastro.xlsx'; excel = source.read_bytes()
     previous = material_pdf(folder); data = previous.read_bytes()
-    record = json.loads((folder / 'registro.json').read_text())
+    record = json.loads(material_record(folder).read_text())
     record['custom_metadata'] = {'preservar': True}
-    (folder / 'registro.json').write_text(json.dumps(record))
+    material_record(folder).write_text(json.dumps(record))
     current = export_central_pdf(source, folder, settings.output, settings.sheet, approved().name,
                                  exporter=synthetic_export)
-    assert current != previous and material_pdf(folder) == current
+    assert current != previous and material_pdf(folder, shared=True) == current
     assert current.read_bytes() and previous.read_bytes() == data and source.read_bytes() == excel
-    changed = json.loads((folder / 'registro.json').read_text())
-    assert {k: v for k, v in changed.items() if k != 'pdf_path'} == {k: v for k, v in record.items() if k != 'pdf_path'}
+    changed = json.loads(material_record(folder).read_text())
+    assert {k: v for k, v in changed.items() if k not in ('pdf_path', 'pdf_shared_path', 'pdf_exports')} == {k: v for k, v in record.items() if k not in ('pdf_path', 'pdf_shared_path', 'pdf_exports')}
 
 
 def test_collision_does_not_overwrite(template, tmp_path, monkeypatch):
@@ -85,14 +88,14 @@ def test_native_rejected_pdf_never_enters_shared_folder(native, tmp_path, mode):
         export_central_pdf(native.source, folder, tmp_path / 'saida', 'Criação de Material Nacional', 'Material teste')
     assert not list((tmp_path / 'saida' / 'lote pdf').iterdir())
     assert list(folder.rglob('reprovado_*.pdf')) and list(folder.rglob('diagnostico_pdf_*.json'))
-    assert not json.loads((folder / 'registro.json').read_text()).get('pdf_path')
+    assert not json.loads(material_record(folder).read_text()).get('pdf_path')
 
 
 def test_failed_reexport_keeps_previous_link_and_diagnostics(template, tmp_path):
     settings = config(template, tmp_path)
     folder, _, _ = generation.generate_documents(approved(), settings, exporter=synthetic_export)
     path = material_pdf(folder); before = path.read_bytes()
-    record = (folder / 'registro.json').read_bytes()
+    record = material_record(folder).read_bytes()
     def fail(source, target, *args):
         target.write_bytes(b'rejected')
         pending_marker(target).write_text('pending')
@@ -100,9 +103,10 @@ def test_failed_reexport_keeps_previous_link_and_diagnostics(template, tmp_path)
     with pytest.raises(RuntimeError):
         export_central_pdf(folder / 'cadastro.xlsx', folder, settings.output, settings.sheet, approved().name, exporter=fail)
     assert material_pdf(folder) == path and path.read_bytes() == before
-    assert (folder / 'registro.json').read_bytes() == record
+    assert json.loads(material_record(folder).read_text())['generation_state']['pdf'] == 'falhou'
+    assert json.loads(material_record(folder).read_text())['pdf_path'] == str(path)
     assert list(folder.rglob('*.pendente'))
-    assert list(path.parent.iterdir()) == [path]
+    assert list(material_pdf(folder, shared=True).parent.iterdir()) == [material_pdf(folder, shared=True)]
 
 
 def test_preview_print_and_open_output_use_correct_locations(template, tmp_path, monkeypatch):
@@ -159,7 +163,7 @@ def test_existing_excel_reexport_uses_shared_folder_without_destination_picker(t
     monkeypatch.setattr(window, 'run_job', lambda task, done: done(task()))
     window.export_existing_excel()
     assert not errors
-    assert material_pdf(folder).parent == Path(settings.output) / 'lote pdf'
+    assert material_pdf(folder, shared=True).parent == Path(settings.output) / 'lote pdf'
     assert material_pdf(folder).is_file() and source.read_bytes() == original
     window.close()
 
@@ -168,12 +172,13 @@ def test_copy_failure_removes_only_owned_partial_pdf(template, tmp_path, monkeyp
     import shutil
     settings = config(template, tmp_path)
     folder, _, _ = generation.generate_documents(approved(), settings, exporter=synthetic_export)
-    path = material_pdf(folder); pdf = path.read_bytes(); record = (folder / 'registro.json').read_bytes()
+    path = material_pdf(folder); pdf = path.read_bytes(); record = material_record(folder).read_bytes()
     def fail_copy(incoming, target):
         target.write(b'partial'); raise OSError('Disco cheio')
     monkeypatch.setattr(shutil, 'copyfileobj', fail_copy)
     with pytest.raises(OSError, match='Disco cheio'):
         export_central_pdf(folder / 'cadastro.xlsx', folder, settings.output, settings.sheet,
                            approved().name, exporter=synthetic_export)
-    assert list(path.parent.iterdir()) == [path] and path.read_bytes() == pdf
-    assert (folder / 'registro.json').read_bytes() == record
+    assert list(material_pdf(folder, shared=True).parent.iterdir()) == [material_pdf(folder, shared=True)] and path.read_bytes() == pdf
+    assert json.loads(material_record(folder).read_text())['generation_state']['pdf'] == 'falhou'
+    assert json.loads(material_record(folder).read_text())['pdf_path'] == str(path)

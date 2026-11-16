@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 import logging
 
+from .records import ensure_record, material_record
 from .excel_writer import write_excel, check_template
 from .pdf_exporter import export_pdf
 from .file_manager import new_output, material_pdf, export_central_pdf
@@ -24,9 +25,11 @@ def generate_documents(item, settings, pdf=True, *, writer=None, exporter=None, 
     if not Path(xlsx).is_file():
         raise RuntimeError('O arquivo Excel não foi criado.')
     try:
-        (folder / 'registro.json').write_text(item.model_dump_json(indent=2), encoding='utf-8')
+        data = item.model_dump(mode='json')
+        data['generation_state'] = {'excel': 'gerado', 'pdf': 'pendente' if pdf else 'não solicitado'}
+        ensure_record(folder, pdf_output or settings.output, data)
     except Exception as exc:
-        exc.pcm_context = {'stage': 'salvar_registro', 'destination': str(folder / 'registro.json')}
+        exc.pcm_context = {'stage': 'salvar_registro', 'destination': str(Path(pdf_output or settings.output) / 'registros json')}
         raise
     error, diagnostic = '', None
     if pdf:
@@ -39,7 +42,7 @@ def generate_documents(item, settings, pdf=True, *, writer=None, exporter=None, 
             else:
                 logging.error('Falha na exportação PDF: %s', type(exc).__name__)
             outcome = str(exc) if isinstance(exc, PdfExportError) else f'O PDF não foi gerado: {exc}'
-            error = f'O Excel e o registro foram salvos em {folder}. {outcome}. Use Exportar PDF do Excel salvo para tentar novamente.'
+            error = f'O Excel foi salvo em {folder}; registro em {material_record(folder, pdf_output or settings.output)}. {outcome}. Use Exportar PDF do Excel salvo para tentar novamente.'
             diagnostic = local_failure(exc)
     return folder, error, diagnostic
 
@@ -53,6 +56,7 @@ class BatchResult:
     folder: Path | None = None
     diagnostic: object = None
     details: dict = field(default_factory=dict)
+    record_root: str | Path | None = None
 
     def __post_init__(self):
         folder = Path(self.folder) if self.folder else None
@@ -61,7 +65,7 @@ class BatchResult:
         report = payload.get('content', {})
         excel = bool(folder and (folder / 'cadastro.xlsx').is_file())
         try:
-            pdf = material_pdf(folder) if folder and (folder / 'registro.json').is_file() else None
+            pdf = material_pdf(folder, output=self.record_root) if folder else None
         except (OSError, ValueError):
             pdf = None
         from .pdf_diagnostics import usable_pdf
@@ -70,6 +74,8 @@ class BatchResult:
         pdf_state = 'aprovado' if pdf and usable_pdf(pdf) else 'não aprovado'
         if self.status == 'erro' and pdf and usable_pdf(pdf):
             pdf_state = 'falhou; PDF anterior disponível'
+        if local.get('local_pdf') and not local.get('pdf_published'):
+            pdf_state = 'aprovado local; cópia do lote falhou'
         if local.get('pdf_published'):
             pdf_state = 'aprovado; associação falhou'
         self.details = dict(item_id=f'item_{self.row + 1:03d}',
@@ -137,10 +143,10 @@ def generate_batch(entries, settings, progress=lambda *args: None, root=None):
             folder = new_output(root, item.name)
             stage = 'gerar_excel'
             folder, error, diagnostic = generate_documents(item, local, True, folder=folder, pdf_output=settings.output)
-            result = BatchResult(row, item, 'erro' if error else 'sucesso', error, folder, diagnostic)
+            result = BatchResult(row, item, 'erro' if error else 'sucesso', error, folder, diagnostic, record_root=settings.output)
         except Exception as exc:
             logging.error('Falha no item %s do lote: %s', row + 1, type(exc).__name__)
-            result = BatchResult(row, item, 'erro', str(exc), folder, local_failure(exc, stage))
+            result = BatchResult(row, item, 'erro', str(exc), folder, local_failure(exc, stage), record_root=settings.output)
         results.append(result)
         if unsafe_cleanup(result.diagnostic):
             processed = {r.row for r in results}
@@ -159,15 +165,15 @@ def retry_batch_pdfs(results, settings, progress=lambda *args: None):
         progress(position, len(failures), result.item.name)
         try:
             source = result.folder / 'cadastro.xlsx'
-            info = existing_workbook(source)
+            info = existing_workbook(source, record_root=settings.output)
             def exporter(workbook, destination, sheet, name, pages):
-                return export_existing(workbook, destination, sheet, info['sha256'], pages)
+                return export_existing(workbook, destination, sheet, info['sha256'], pages, record_root=settings.output)
             export_central_pdf(source, result.folder, settings.output, settings.sheet,
                                result.item.name, settings.expected_pages, exporter=exporter)
-            retried.append(BatchResult(result.row, result.item, 'sucesso', folder=result.folder))
+            retried.append(BatchResult(result.row, result.item, 'sucesso', folder=result.folder, record_root=settings.output))
         except Exception as exc:
             payload = local_failure(exc, 'conferir_excel_salvo')
-            retried.append(BatchResult(result.row, result.item, 'erro', str(exc), result.folder, payload))
+            retried.append(BatchResult(result.row, result.item, 'erro', str(exc), result.folder, payload, record_root=settings.output))
             if unsafe_cleanup(payload):
                 remaining = failures[position:]
                 retried.extend(BatchResult(r.row, r.item, 'erro', 'Nova tentativa interrompida: Excel não encerrado.', r.folder)

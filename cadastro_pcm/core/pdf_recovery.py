@@ -4,6 +4,7 @@ from pathlib import Path
 from datetime import date
 from openpyxl import Workbook
 from .models import Item
+from .records import material_record
 from .template_reader import read_template
 from .print_layout import print_area, PROPOSED
 from .excel_writer import fingerprint
@@ -11,13 +12,13 @@ from .pdf_exporter import export_pdf
 from .pdf_diagnostics import diagnostic_payload
 
 
-def existing_workbook(path):
+def existing_workbook(path, record_root=None):
     path = Path(path)
-    record = Item.model_validate_json((path.parent / 'registro.json').read_text(encoding='utf-8'))
+    record = Item.model_validate_json(material_record(path.parent, record_root).read_text(encoding='utf-8'))
     if not record.approved:
         raise ValueError('O registro local não contém aprovação humana.')
     if path.name != 'cadastro.xlsx':
-        raise ValueError('Selecione cadastro.xlsx junto do registro.json criado pelo aplicativo.')
+        raise ValueError('Selecione cadastro.xlsx associado ao registro criado pelo aplicativo.')
     book = read_template(path)
     try:
         sheets = {}
@@ -40,8 +41,8 @@ def existing_workbook(path):
         book.close()
 
 
-def export_existing(path, destination, sheet, expected_sha, expected_pages=1):
-    info = existing_workbook(path)
+def export_existing(path, destination, sheet, expected_sha, expected_pages=1, *, record_root=None):
+    info = existing_workbook(path, record_root)
     if info['sha256'] != expected_sha:
         raise ValueError('O Excel mudou desde a conferência. Selecione e confira a nova versão.')
     if sheet not in info['sheets']:

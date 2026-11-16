@@ -1,3 +1,4 @@
+from cadastro_pcm.core.records import material_record
 """Approval with explicit per-field authorization and bounded long-list dialogs."""
 import json
 from pathlib import Path
@@ -132,7 +133,7 @@ def test_generate_incomplete_batch_preserves_corporate_fields(gui, monkeypatch):
     _, results = generation.generate_batch(list(enumerate(items)), window.settings)
     assert all(result.status == 'sucesso' for result in results)
     for result in results:
-        record = json.loads((result.folder / 'registro.json').read_text())
+        record = json.loads(material_record(result.folder).read_text())
         assert record['authorized_pending_fields'] == ['unit_price', 'ncm']
         assert not record['ncm_not_applicable'] and record['ncm'] == '' and record['unit_price'] is None
     assert Path(window.settings.template).read_bytes() == before

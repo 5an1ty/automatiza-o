@@ -294,12 +294,13 @@ def test_material_names_collision_and_saved_preview(template, tmp_path, monkeypa
     assert results[0].folder != results[1].folder
     for result in results:
         path = material_pdf(result.folder)
-        assert path.name.startswith('cadastro_') and path.parent == tmp_path / 'lote pdf'
+        assert path.name == 'cadastro.pdf' and path.parent == result.folder
         previous = path.read_bytes()
         next_path = export_central_pdf(result.folder / 'cadastro.xlsx', result.folder, tmp_path,
                                        settings.sheet, item.name, 1, exporter=export)
         assert next_path != path
-        assert material_pdf(result.folder) == next_path and path.read_bytes() == previous
+        assert material_pdf(result.folder, shared=True) == next_path and path.read_bytes() == previous
+        assert material_pdf(result.folder).parent == result.folder
     window.items = [item]; window.refresh(); window.outputs[0] = results[0].folder
     window.update_actions()
     assert window.pdf_path() == material_pdf(results[0].folder)

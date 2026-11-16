@@ -470,7 +470,7 @@ class Window(QMainWindow):
             except OSError as exc:
                 reasons.append('Falha de acesso ao modelo: ' + str(exc))
         ready = not reasons
-        pdf = selected and row in self.outputs and usable_pdf(material_pdf(self.outputs[row]))
+        pdf = selected and row in self.outputs and usable_pdf(material_pdf(self.outputs[row], output=self.settings.output))
         self.edit_button.setEnabled(selected); self.research_button.setEnabled(selected)
         self.excel_button.setEnabled(ready); self.pdf_button.setEnabled(ready and sys.platform == 'win32')
         reason = '\n'.join(reasons) if reasons else 'Item aprovado e modelo conferido. Pronto para gerar Excel.'
@@ -663,7 +663,7 @@ class Window(QMainWindow):
         path = QFileDialog.getOpenFileName(self, 'Selecionar cadastro.xlsx gerado pelo aplicativo', '', 'Excel (*.xlsx)')[0]
         if not path: return
         try:
-            info = existing_workbook(path)
+            info = existing_workbook(path, record_root=self.settings.output)
             dialog = QDialog(self); dialog.setWindowTitle('Conferir nova versão para exportação')
             layout = QVBoxLayout(dialog)
             layout.addWidget(label('Confirme a aba e confira o Excel antes de exportar. Alterações manuais constituem uma nova versão; o original será preservado.'))
@@ -674,7 +674,7 @@ class Window(QMainWindow):
             selected_sheet = sheet.currentText()
             def task():
                 def exporter(workbook, destination, chosen_sheet, name, pages):
-                    return export_existing(workbook, destination, chosen_sheet, info['sha256'], pages)
+                    return export_existing(workbook, destination, chosen_sheet, info['sha256'], pages, record_root=self.settings.output)
                 return export_central_pdf(path, Path(path).parent, self.settings.output,
                                           selected_sheet, info['sheets'][selected_sheet],
                                           self.settings.expected_pages, exporter=exporter)
@@ -925,9 +925,9 @@ class Window(QMainWindow):
                     raise RuntimeError(f'Excel preservado em {folder}. Nova exportação falhou: {exc}') from exc
                 return folder
             def done(result):
-                self.job_message = f'PDF exportado · {material_pdf(result)}'
+                self.job_message = f'PDF exportado · {material_pdf(result, output=self.settings.output)}'
                 self.update_actions()
-                QMessageBox.information(self, 'PDF exportado', f'{material_pdf(result)}\nConfira legibilidade, logotipo, Tipo e assinaturas antes de imprimir.')
+                QMessageBox.information(self, 'PDF exportado', f'{material_pdf(result, output=self.settings.output)}\nConfira legibilidade, logotipo, Tipo e assinaturas antes de imprimir.')
             self.run_job(task, done)
         except Exception as exc:
             QMessageBox.warning(self, 'Exportar PDF', str(exc))
@@ -935,7 +935,7 @@ class Window(QMainWindow):
     def pdf_path(self):
         row, _ = self.selected()
         if row not in self.outputs: raise ValueError('Gere o PDF deste item antes de continuar.')
-        path = material_pdf(self.outputs[row])
+        path = material_pdf(self.outputs[row], output=self.settings.output)
         if not usable_pdf(path): raise ValueError('Gere e valide o PDF deste item antes de continuar.')
         return path
 

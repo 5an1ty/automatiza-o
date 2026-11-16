@@ -83,9 +83,10 @@ calculadas/dinâmicas e validações personalizadas são bloqueadas conservadora
    confirmado também, salvo autorização individual de preenchimento posterior no Excel. NCM ausente exige informar o código, confirmar que não se aplica ou
    autorizar explicitamente a aprovação com essa pendência para preenchimento posterior. Oito dígitos válidos não comprovam classificação fiscal correta.
 8. Gere Excel ou Excel + PDF para o item selecionado. Cada operação cria uma pasta
-   exclusiva `NOME_identificador/cadastro.xlsx`, `registro.json` e, quando solicitado,
-   PDFs ficam em `lote pdf/cadastro_<identificador>.pdf` na saída configurada. O JSON
-   registra a associação, os dados e as evidências. Não há sobrescrita de saídas.
+   exclusiva `NOME_identificador/cadastro.xlsx` e, quando solicitado, um PDF aprovado
+   junto do Excel. A cópia desse PDF fica em `lote pdf/` e o registro em
+   `registros json/registro_<identificador>.json`, dentro da saída configurada.
+   O JSON registra material, caminhos, estados e evidências. Não há sobrescrita de documentos.
 9. Visualize o PDF; confira cortes, descrição longa, estrutura, Tipo e assinaturas.
    **Imprimir…** abre o visualizador do Windows; use Ctrl+P e confirme lá. Não é
    enviado nenhum trabalho automaticamente à impressora.
@@ -800,7 +801,8 @@ Para verificar a instalação sem documentos empresariais:
    O teste sintético não homologa o layout do formulário corporativo.
 
 Para recuperar arquivos de sessões anteriores, use **Gerar PDF a partir de Excel
-existente**. Selecione `cadastro.xlsx` junto do seu `registro.json`, confirme a aba
+existente**. Selecione `cadastro.xlsx`; o aplicativo encontra o registro em `registros json`
+(ou lê o registro antigo para compatibilidade). Confirme a aba
 validada. O PDF aprovado será salvo em `lote pdf` na saída configurada. A identificação, Tipo vazio, data e área de
 impressão são conferidos; a exportação e a validação final são repetidas. O hash da
 versão escolhida impede exportar silenciosamente uma versão alterada após a
@@ -843,16 +845,16 @@ nome, conteúdo obrigatório completo, data, páginas vazias, limites de texto e
 A exportação preserva a configuração de impressão atual e a proteção do modelo.
 As descrições históricas acima sobre forçar A4, Fit To e limpar quebras foram substituídas.
 
-Na geração individual e em lote, o PDF recebe um nome automático e exclusivo
-`cadastro_<identificador>.pdf`, sem depender do nome do material, compatível com
-Windows. Todos os PDFs aprovados ficam em `lote pdf` dentro da saída configurada,
-inclusive quando os Excel estão dentro de subpastas de lotes. Excel e JSON
-continuam nas pastas exclusivas dos materiais. Reexportações recebem novos nomes
-e preservam as anteriores. O campo `pdf_path` do `registro.json` aponta para o
-PDF aprovado mais recente. Visualizar e Imprimir consultam essa associação;
-Abrir saída abre a pasta de saída configurada, que contém `lote pdf`.
-Saídas antigas com nomes de material ou `cadastro.pdf` continuam acessíveis;
-não são movidas, renomeadas nem apagadas automaticamente.
+Na geração individual e em lote, o PDF aprovado fica junto de `cadastro.xlsx`:
+`cadastro.pdf` na primeira exportação e `cadastro_<identificador>.pdf` nas seguintes.
+Uma cópia idêntica fica em `lote pdf/cadastro_<identificador>.pdf`, na saída configurada.
+Os nomes são compatíveis com Windows e não dependem da descrição do material.
+Excel e PDF mantêm as pastas exclusivas atuais dos materiais, inclusive dentro de lotes.
+Os novos registros ficam exclusivamente em `registros json/registro_<identificador>.json`.
+Visualizar e Imprimir usam o PDF local associado ao registro; Abrir saída abre a
+saída configurada, que contém as pastas de PDFs e de registros. Reexportações
+preservam todos os PDFs anteriores e mantêm seu histórico de associações no registro.
+Saídas antigas continuam legíveis e não são movidas ou apagadas automaticamente.
 
 Diferença de papel não mantém marcador `.pendente`, não cria diagnóstico e não
 segrega o PDF. Falhas reais continuam bloqueadas e preservadas em diagnóstico,
@@ -918,51 +920,57 @@ seleção/aprovação de 19 itens e geração em lote de 19 cadastros sintético
 preservação do modelo. A exportação COM é simulada nos testes Linux.
 
 
-## Pasta única de PDFs aprovados — lote pdf
+## Organização dos Excel, PDFs e registros
 
-A geração individual, Gerar todos os aprovados, Gerar selecionados, a nova
-tentativa dos PDFs de lote e as duas formas de reexportar usam a mesma pasta
-`<saída configurada>/lote pdf`. Ela é criada automaticamente quando há PDF
-aprovado a publicar. Não há mudanças no conteúdo, layout, modelo nem organização
-dos Excel. Os registros JSON continuam nos locais anteriores e recebem apenas
-a associação ao novo caminho do PDF. Por exemplo:
+Todos os fluxos usam a mesma organização: geração individual, lote, selecionados,
+reexportação de Excel existente e novas tentativas. Exemplo de saída:
 
 ```text
 documentos/
-    lote pdf/
-        cadastro_a1b2...pdf
-        cadastro_c3d4...pdf
     MATERIAL_identificador/
         cadastro.xlsx
-        registro.json
+        cadastro.pdf
+    lote pdf/
+        cadastro_identificador.pdf
+    registros json/
+        registro_identificador.json
 ```
 
-A exportação e todas as validações existentes acontecem primeiro numa pasta
-curta e exclusiva `pcm_<id>` no temporário local do sistema, fora de `lote pdf`.
-Isso evita somar lote, descrição e subpastas aos caminhos usados pelo Excel. Somente
-após aprovação o PDF é copiado sem alterar seus bytes. O nome usa identificador
-aleatório e publicação atômica sem substituição, impedindo sobrescrita mesmo
-em caso de colisão. A cópia intermediária fica fora de `lote pdf`, de forma que
-nenhum PDF parcial é exposto nessa pasta. A associação no JSON é substituída atomicamente depois da cópia.
-A reexportação de Excel existente usa a saída configurada automaticamente,
-sem solicitar outro destino PDF. Visualizar e Imprimir usam o PDF do registro.
+Lotes continuam criando sua pasta e as subpastas de materiais como antes;
+`lote pdf` e `registros json` ficam diretamente na saída configurada, compartilhadas
+entre os lotes. A geração somente de Excel também cria o registro central.
+Nenhum registro JSON novo é criado na pasta individual. Não há novo botão nem
+mudança no fluxo de revisão, aprovação ou aparência dos formulários.
 
-Falhas de exportação, integridade ou encerramento COM mantêm os documentos
-reprovados, marcadores e relatórios no temporário curto e tentam preservar uma
-cópia em `diagnostico_pdf/pcm_<id>` junto do cadastro. Os caminhos disponíveis
-aparecem no diagnóstico local; se a cópia falhar, o original temporário é mantido.
-Eles não são publicados em `lote pdf`. Uma reexportação malsucedida conserva a
-associação ao PDF aprovado anterior. Nenhum diagnóstico anterior é apagado.
-Se a gravação da associação falhar, a operação informa erro e preserva o PDF
-aprovado já copiado; os arquivos Excel e os registros anteriores permanecem.
+A exportação e todas as validações existentes acontecem numa pasta temporária
+curta e absoluta, independente dos nomes dos materiais. Após aprovação, os bytes
+são publicados primeiro junto do Excel e depois em `lote pdf`, com publicação
+atômica sem substituição. Arquivos existentes e marcadores de outras tentativas
+não são reutilizados. PDFs parciais, reprovados e temporários ficam fora de `lote pdf`.
+O modelo Excel e o Excel preenchido não são modificados pela exportação.
 
-Validação da centralização: **272 testes passaram**, nenhum falhou. Inclui geração
-individual e em lote, nomes únicos e colisões, reexportação, leitura do vínculo
-no registro, visualização Qt, impressão simulada, preservação de Excel e PDFs
-anteriores e isolamento de falhas de conteúdo, páginas vazias, limpeza COM e cópia.
-A exportação nativa e a impressão física continuam dependendo de Windows/Excel;
-os testes Linux usam documentos sintéticos e COM simulado.
+O registro central preserva todos os campos anteriores e contém `record_id`,
+`excel_path`, `excel_relative_path`, `pdf_path` (PDF local), `pdf_shared_path`
+(cópia central), `pdf_exports` (histórico das duas localizações) e `generation_state`.
+A consulta e a reexportação localizam o registro pela identidade da pasta e pelo
+caminho do Excel, sem um arquivo JSON auxiliar ao lado do cadastro. As atualizações
+do próprio registro são atômicas; cada cadastro independente tem registro exclusivo.
+Os dados, evidências, aprovações e campos personalizados existentes são preservados.
 
+Se o PDF falhar, o Excel e o registro central permanecem salvos; o registro informa
+a etapa e o estado da geração. Se a cópia para `lote pdf` falhar após a publicação
+local, esse PDF válido é preservado e registrado, com a cópia central pendente.
+As associações anteriores permanecem no histórico. Use **Tentar novamente somente
+PDFs** para reutilizar os Excel salvos. Diagnósticos técnicos continuam em suas
+pastas específicas e podem conter JSON; eles não são registros de materiais.
+Falhas mantêm a evidência no temporário curto e tentam copiar para
+`diagnostico_pdf/pcm_<id>` junto do cadastro. Nenhum diagnóstico anterior é apagado.
+
+Compatibilidade: `registro.json` de versões antigas é lido somente como fallback.
+Ao reexportar uma saída antiga, uma versão central do registro é criada; os arquivos
+antigos permanecem intactos. Não há migração destrutiva ou remoção automática de
+JSONs antigos. Para um Excel fora da saída atual, a recuperação também consulta
+`registros json` da saída configurada.
 
 ## Investigar falhas de geração em lote
 
@@ -1001,3 +1009,10 @@ completa no painel, bloqueio de diretório e ausência de dados privados nos log
 As validações de conteúdo, data, páginas, proteção e encerramento COM continuam
 ativas. O teste com Microsoft Excel real e o diagnóstico dos 15 erros originais
 continuam necessários para confirmar a causa no computador do usuário.
+
+Validação da reorganização: **288 testes passaram**, nenhum falhou. Inclui
+geração individual e em lote, JSON central sem registro junto do Excel, PDFs
+locais e cópias centrais idênticas, nomes repetidos, histórico sem sobrescrita,
+falha de exportação e de cópia central, nova tentativa, recuperação de registros
+antigos e visualização/impressão. Os documentos são sintéticos e a exportação
+COM é simulada no Linux; Excel real e impressão física exigem conferência no Windows.

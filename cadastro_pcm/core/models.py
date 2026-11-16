@@ -16,6 +16,12 @@ class Evidence(BaseModel):
 
 class Item(BaseModel):
     pdf_path: str = ''
+    pdf_shared_path: str = ''
+    pdf_exports: list[dict[str, str]] = Field(default_factory=list)
+    excel_path: str = ''
+    excel_relative_path: str = ''
+    record_id: str = ''
+    generation_state: dict[str, str] = Field(default_factory=dict)
     name: str = ''
     description: str = ''
     quantity: Decimal | None = Field(default=None, gt=0)

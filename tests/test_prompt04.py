@@ -1,3 +1,4 @@
+from cadastro_pcm.core.records import material_record
 """Synthetic regression cases only; official documents stay outside Git."""
 from decimal import Decimal
 from pathlib import Path
@@ -242,7 +243,7 @@ def test_gui_review_approval_and_excel_generation(gui):
     assert window.excel_button.isEnabled()
     window.excel_button.click(); wait_job(app, window)
     folder = window.outputs[0]
-    assert (folder / 'cadastro.xlsx').is_file() and (folder / 'registro.json').is_file()
+    assert (folder / 'cadastro.xlsx').is_file() and material_record(folder).is_file()
     assert any(title == 'Arquivos gerados' for title, _ in messages)
     assert str(folder) in window.status.text()
     wb = read_template(folder / 'cadastro.xlsx')

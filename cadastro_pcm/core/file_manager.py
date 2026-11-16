@@ -25,7 +25,7 @@ def new_output(root, name):
     raise ValueError('Não foi possível criar uma pasta exclusiva.')
 
 
-def material_pdf(folder, name=None, *, new=False):
+def material_pdf(folder, name=None, *, new=False, shared=False, output=None):
     """Resolve the recorded approved PDF, independent of later review edits.
 
     Retain legacy local-name discovery for outputs created before centralization.
@@ -33,13 +33,18 @@ def material_pdf(folder, name=None, *, new=False):
     import json
     from .pdf_diagnostics import usable_pdf, pending_marker
     folder = Path(folder)
-    record = folder / 'registro.json'
+    from .records import material_record
+    try:
+        record = material_record(folder, output)
+    except FileNotFoundError:
+        record = folder / '__registro_ausente__'
     if not new and record.is_file():
-        saved = json.loads(record.read_text(encoding='utf-8')).get('pdf_path')
+        data = json.loads(record.read_text(encoding='utf-8'))
+        saved = data.get('pdf_shared_path') if shared else data.get('pdf_path')
+        saved = saved or data.get('pdf_path')
         if saved:
             return Path(saved)
     if name is None:
-        record = folder / 'registro.json'
         if not record.is_file():
             return folder / 'cadastro.pdf'
         name = json.loads(record.read_text(encoding='utf-8'))['name']
@@ -62,8 +67,6 @@ def material_pdf(folder, name=None, *, new=False):
 def _export_central_pdf(workbook, folder, output, sheet, name, pages, exporter, context):
     """Validate outside the shared folder, then publish exclusively and link the record."""
     import json
-    import shutil
-    import os
     import tempfile
     from .pdf_exporter import export_pdf
     from .pdf_diagnostics import usable_pdf
@@ -71,6 +74,9 @@ def _export_central_pdf(workbook, folder, output, sheet, name, pages, exporter, 
     shared = output / 'lote pdf'
     context.update(stage='criar_diretorio_pdf', destination=str(shared))
     shared.mkdir(parents=True, exist_ok=True)
+    from .records import ensure_record
+    context['stage'] = 'localizar_registro'
+    record = ensure_record(folder, output)
     context['stage'] = 'criar_temporario_pdf'
     staging = Path(tempfile.mkdtemp(prefix='pcm_')).resolve()
     source = staging / 'cadastro.pdf'
@@ -81,41 +87,20 @@ def _export_central_pdf(workbook, folder, output, sheet, name, pages, exporter, 
     context['stage'] = 'conferir_pdf_aprovado'
     if not usable_pdf(source) or source.stat().st_size == 0:
         raise RuntimeError('O arquivo PDF aprovado não foi criado.')
-    context['stage'] = 'copiar_pdf_aprovado'
-    # Copy outside the shared folder, then publish the complete PDF atomically.
-    # Windows rename refuses replacement; POSIX link provides the same guarantee.
-    descriptor, temporary_pdf = tempfile.mkstemp(prefix='.pcm_pdf_', suffix='.tmp', dir=shared.parent)
-    temporary_pdf = Path(temporary_pdf)
-    try:
-        with os.fdopen(descriptor, 'wb') as target, source.open('rb') as incoming:
-            shutil.copyfileobj(incoming, target)
-        for _ in range(10):
-            destination = shared / ('cadastro_' + uuid4().hex + '.pdf')
-            context.update(stage='publicar_pdf', destination=str(destination))
-            try:
-                if os.name == 'nt':
-                    os.rename(temporary_pdf, destination)
-                else:
-                    os.link(temporary_pdf, destination)
-            except FileExistsError:
-                continue
-            break
-        else:
-            raise ValueError('Não foi possível reservar um nome exclusivo para o PDF.')
-    finally:
-        temporary_pdf.unlink(missing_ok=True)
-    context.update(stage='associar_pdf_registro', pdf_published=True)
-    record = folder / 'registro.json'
+    context['stage'] = 'publicar_pdf_local'
+    local_pdf = publish_pdf(source, folder, prefer_cadastro=True)
+    context.update(local_pdf=str(local_pdf), stage='copiar_pdf_aprovado')
+    destination = publish_pdf(source, shared)
+    context.update(stage='associar_pdf_registro', pdf_published=True, destination=str(destination))
+    from .records import update_record
     data = json.loads(record.read_text(encoding='utf-8'))
-    data['pdf_path'] = str(destination)
-    temporary = folder / ('registro_' + uuid4().hex + '.tmp')
-    handle = temporary.open('x', encoding='utf-8')
-    try:
-        with handle:
-            handle.write(json.dumps(data, ensure_ascii=False, indent=2))
-        temporary.replace(record)
-    finally:
-        temporary.unlink(missing_ok=True)
+    entry = {'local_path': str(local_pdf), 'shared_path': str(destination)}
+    history = data.setdefault('pdf_exports', [])
+    if entry not in history:
+        history.append(entry)
+    data.update(pdf_path=str(local_pdf), pdf_shared_path=str(destination),
+                generation_state={'excel': 'gerado', 'pdf': 'aprovado'})
+    update_record(record, data)
     # A cleanup failure after publication must not invalidate an approved PDF.
     try:
         source.unlink()
@@ -143,5 +128,58 @@ def export_central_pdf(workbook, folder, output, sheet, name, pages=1, *, export
                     exc.report_path = retained / Path(exc.report_path).relative_to(staging)
             except (OSError, ValueError):
                 pass  # The original short temporary directory remains available.
+        try:
+            from .records import ensure_record, update_record
+            import json
+            record = ensure_record(folder, output)
+            data = json.loads(record.read_text(encoding='utf-8'))
+            data['generation_state'] = {'excel': 'gerado', 'pdf': 'falhou', 'stage': context['stage'],
+                                        'exception_type': type(exc).__name__,
+                                        'pdf_local': 'aprovado' if context.get('local_pdf') else 'não gerado',
+                                        'pdf_lote': 'aprovado' if context.get('pdf_published') else 'não gerado'}
+            if context.get('local_pdf'):
+                entry = {'local_path': context['local_pdf'], 'shared_path': context.get('destination', '') if context.get('pdf_published') else ''}
+                history = data.setdefault('pdf_exports', [])
+                if entry not in history:
+                    history.append(entry)
+                data['pdf_path'] = context['local_pdf']
+                if not context.get('pdf_published'):
+                    data['pdf_shared_path'] = ''
+            if context.get('pdf_published'):
+                data['pdf_shared_path'] = context['destination']
+            update_record(record, data)
+        except (OSError, ValueError):
+            pass
         exc.pcm_context = context
         raise
+
+
+def publish_pdf(source, directory, *, prefer_cadastro=False):
+    """Publish complete approved bytes atomically, with no replacement of old PDFs."""
+    import os
+    import shutil
+    import tempfile
+    directory = Path(directory).resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix='.pcm_pdf_', suffix='.tmp', dir=directory.parent)
+    temporary = Path(temporary)
+    try:
+        with os.fdopen(descriptor, 'wb') as target, Path(source).open('rb') as incoming:
+            shutil.copyfileobj(incoming, target)
+        for attempt in range(10):
+            name = 'cadastro.pdf' if prefer_cadastro and attempt == 0 else 'cadastro_' + uuid4().hex + '.pdf'
+            destination = directory / name
+            from .pdf_diagnostics import pending_marker
+            if pending_marker(destination).exists():
+                continue
+            try:
+                if os.name == 'nt':
+                    os.rename(temporary, destination)
+                else:
+                    os.link(temporary, destination)
+            except FileExistsError:
+                continue
+            return destination
+        raise FileExistsError('Não foi possível reservar um nome exclusivo para o PDF.')
+    finally:
+        temporary.unlink(missing_ok=True)

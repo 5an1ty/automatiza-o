@@ -1,3 +1,4 @@
+from cadastro_pcm.core.records import material_record
 """Batch regressions use synthetic workbooks; PDF/COM are explicitly simulated."""
 from pathlib import Path
 from time import monotonic
@@ -38,9 +39,9 @@ def test_batch_independent_files_names_and_original(count, settings, monkeypatch
     assert all(r.status == 'sucesso' and r.folder.parent == root for r in results)
     assert [p[0] for p in progress] == list(range(1, count + 1))
     for result in results:
-        assert all((result.folder / f).is_file() for f in ('cadastro.xlsx', 'registro.json'))
+        assert (result.folder / 'cadastro.xlsx').is_file() and material_record(result.folder).is_file()
         assert generation.material_pdf(result.folder).is_file()
-        assert generation.material_pdf(result.folder).parent == Path(settings.output) / 'lote pdf'
+        assert generation.material_pdf(result.folder, shared=True).parent == Path(settings.output) / 'lote pdf'
         book = load_workbook(result.folder / 'cadastro.xlsx')
         assert book.active['C16'].value is None
         assert book.active['A27'].value is None
